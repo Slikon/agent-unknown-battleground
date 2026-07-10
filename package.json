@@ -1,0 +1,22 @@
+{
+  "name": "aub",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Unknown's Battlegrounds — top-down battle royale commanded by an LLM agent.",
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n client,server -c cyan,magenta \"pnpm dev:client\" \"pnpm dev:server\"",
+    "dev:client": "pnpm --filter @aub/client dev",
+    "dev:server": "pnpm --filter @aub/server dev",
+    "build": "pnpm --filter @aub/client build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3",
+    "typescript": "5.9.3"
+  }
+}

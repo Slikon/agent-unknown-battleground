@@ -1,1 +1,23 @@
-SPEC.md
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# logs (LLM directive JSONL logs land here in later phases)
+logs/
+*.log
+
+# runtime / editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.local
+.env
+.env.*
+
+# Tiny Swords art pack — drop it locally per ASSETS.md, don't commit it
+packages/client/public/assets/*
+!packages/client/public/assets/.gitkeep

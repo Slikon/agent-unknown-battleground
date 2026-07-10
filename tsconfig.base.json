@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // --- Language / output ---
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "useDefineForClassFields": true,
+
+    // --- Strictness (mandatory across the whole project) ---
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // --- Module interop / bundler friendliness ---
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+
+    // Nothing here emits JS: Vite bundles the client, tsx runs the server,
+    // and shared is consumed as source. tsc is used only for type-checking.
+    "noEmit": true,
+    "skipLibCheck": true
+  }
+}

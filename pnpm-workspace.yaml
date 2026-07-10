@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+
+# pnpm v11 blocks dependency build (postinstall) scripts by default and asks us
+# to decide per package (allowBuilds map: true = run its script, false = skip).
+allowBuilds:
+  # esbuild (used by Vite + tsx): its script just installs the native binary. Trusted.
+  esbuild: true
+  # msgpackr-extract: optional native accelerator for msgpackr (Colyseus
+  # serialization). We don't need it — msgpackr falls back to pure JS.
+  msgpackr-extract: false
