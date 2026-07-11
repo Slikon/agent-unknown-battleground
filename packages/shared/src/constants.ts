@@ -39,5 +39,22 @@ export type AgentColor = (typeof AGENT_COLORS)[number];
 export const WORLD_WIDTH = 960;
 export const WORLD_HEIGHT = 540;
 
+/**
+ * Tile grid laid over the world for server-side A* pathfinding collision
+ * (SPEC.md §3.1). TILE_SIZE divides both world dimensions evenly.
+ */
+export const TILE_SIZE = 30;
+export const GRID_COLS = WORLD_WIDTH / TILE_SIZE; // 32
+export const GRID_ROWS = WORLD_HEIGHT / TILE_SIZE; // 18
+
 /** Warrior movement speed, px/sec. */
 export const MOVE_SPEED = 220;
+
+/**
+ * Warrior combat stats (SPEC.md §6): 100 HP, 15 damage per hit on a 0.8 s
+ * cooldown, 40 px melee reach.
+ */
+export const WARRIOR_MAX_HP = 100;
+export const WARRIOR_DAMAGE = 15;
+export const WARRIOR_ATTACK_COOLDOWN_MS = 800;
+export const WARRIOR_ATTACK_RANGE = 40;

@@ -1,4 +1,5 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
+import { WARRIOR_MAX_HP } from "./constants";
 import type { AgentColor } from "./constants";
 
 /**
@@ -11,8 +12,8 @@ import type { AgentColor } from "./constants";
 /** Which way a unit's sprite faces (Tiny Swords strips face right natively). */
 export type AgentDir = "left" | "right";
 
-/** Which animation a unit is in. Attack/death arrive with Phase 2. */
-export type AgentAnim = "idle" | "run";
+/** Which animation a unit is in. Death is rendered client-side on removal. */
+export type AgentAnim = "idle" | "run" | "attack";
 
 export class AgentState extends Schema {
   /** Colyseus sessionId of the owning client (also this agent's map key). */
@@ -26,6 +27,9 @@ export class AgentState extends Schema {
 
   @type("string") dir: AgentDir = "right";
   @type("string") anim: AgentAnim = "idle";
+
+  /** Current hit points. Reaches 0 → the agent dies and is removed. */
+  @type("number") hp = WARRIOR_MAX_HP;
 }
 
 export class MatchState extends Schema {

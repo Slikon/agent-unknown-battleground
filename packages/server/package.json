@@ -15,10 +15,12 @@
     "@colyseus/schema": "^4.0.27",
     "@colyseus/ws-transport": "^0.17.13",
     "express": "^5.2.1",
+    "pathfinding": "^0.4.18",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/pathfinding": "^0.1.0",
     "tsx": "^4.23.0"
   }
 }

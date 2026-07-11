@@ -6,10 +6,12 @@ import {
   warriorAnimKey,
   warriorSheetUrl,
 } from "../assets/warrior";
+import { EXPLOSION_ANIM, EXPLOSION_SHEET } from "../assets/explosion";
 
 /**
- * Loads every faction's warrior strips, registers their animations, then
- * hands off to GameScene (SPEC.md §3.2 — Lobby/Result scenes come later).
+ * Loads every faction's warrior strips plus the death explosion, registers all
+ * animations, then hands off to GameScene (SPEC.md §3.2 — Lobby/Result scenes
+ * come later).
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -39,6 +41,11 @@ export class BootScene extends Phaser.Scene {
         );
       }
     }
+
+    this.load.spritesheet(EXPLOSION_SHEET.key, EXPLOSION_SHEET.url, {
+      frameWidth: EXPLOSION_SHEET.frameWidth,
+      frameHeight: EXPLOSION_SHEET.frameHeight,
+    });
   }
 
   create(): void {
@@ -57,6 +64,16 @@ export class BootScene extends Phaser.Scene {
         });
       }
     }
+
+    this.anims.create({
+      key: EXPLOSION_ANIM,
+      frames: this.anims.generateFrameNumbers(EXPLOSION_SHEET.key, {
+        start: 0,
+        end: EXPLOSION_SHEET.frames - 1,
+      }),
+      frameRate: EXPLOSION_SHEET.frameRate,
+      repeat: 0,
+    });
 
     this.scene.start("GameScene");
   }

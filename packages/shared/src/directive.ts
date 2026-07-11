@@ -43,3 +43,19 @@ export const DirectiveSchema = z.object({
 
 /** The validated, structured order a single agent executes every tick. */
 export type Directive = z.infer<typeof DirectiveSchema>;
+
+/**
+ * Temporary hardcoded directive every agent runs in Phase 2 (SPEC.md §8): charge
+ * the nearest enemy and fight. Replaced per-agent by LLM-produced directives in
+ * Phase 4 — the behavior executor already treats it as just one possible
+ * directive, not a special case.
+ */
+export const DEFAULT_DIRECTIVE: Directive = {
+  stance: "aggressive",
+  move_target: { type: "nearest_enemy" },
+  engage_range: 400,
+  target_priority: "closest",
+  retreat_hp: 0,
+  retreat_to: "away_from_enemy",
+  acknowledgement: "Charging the nearest enemy.",
+};
