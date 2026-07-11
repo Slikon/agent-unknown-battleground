@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@colyseus/schema": "^4.0.27",
     "zod": "^4.4.3"
   }
 }

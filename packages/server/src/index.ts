@@ -13,11 +13,11 @@ const gameServer = new Server({
 });
 
 // Register the match room handler. Colyseus instantiates a MatchRoom on demand
-// when a client joins "match"; until then nothing is running (Phase 0).
+// when the first client joins "match".
 gameServer.define("match", MatchRoom);
 
 gameServer
-  .listen(port)
+  .listen(port, "0.0.0.0")
   .then(() => {
     console.log(`⚔️  AUB server listening on ws://0.0.0.0:${port}`);
   })

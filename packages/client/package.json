@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aub/shared": "workspace:*",
+    "@colyseus/sdk": "^0.17.43",
     "phaser": "^3.90.0"
   },
   "devDependencies": {
