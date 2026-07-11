@@ -10,8 +10,12 @@ import {
   WARRIOR_MAX_HP,
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  ZONE_SAFE_MARGIN,
+  clampToLand,
+  nearestWalkable,
   pxToTile,
 } from "@aub/shared";
+import type { Zone } from "./Zone";
 import { Pathfinder, type Point } from "./Pathfinder";
 
 /** Per-agent server-only state (never synced): its directive + movement/combat bookkeeping. */
@@ -54,6 +58,11 @@ export class BehaviorExecutor {
     this.runtime.delete(sessionId);
   }
 
+  /** Drop all per-agent state (between matches). */
+  clear(): void {
+    this.runtime.clear();
+  }
+
   setDirective(sessionId: string, directive: Directive): void {
     const rt = this.runtime.get(sessionId);
     if (rt) {
@@ -66,12 +75,18 @@ export class BehaviorExecutor {
   /**
    * Advance every living agent one fixed step. Returns the sessionIds of agents
    * that died this tick (hp reached 0) so the room can remove them from state.
+   * `zone`, when live, enables the hard-wired "get to safety" override.
    */
-  tick(agents: MapSchema<AgentState>, nowMs: number, dtSec: number): string[] {
+  tick(
+    agents: MapSchema<AgentState>,
+    nowMs: number,
+    dtSec: number,
+    zone: Zone | null = null,
+  ): string[] {
     agents.forEach((self) => {
       if (self.hp <= 0) return; // killed earlier this same tick → skip its turn
       const rt = this.runtime.get(self.id);
-      if (rt) this.stepAgent(self, agents, rt, nowMs, dtSec);
+      if (rt) this.stepAgent(self, agents, rt, nowMs, dtSec, zone);
     });
 
     const dead: string[] = [];
@@ -87,6 +102,7 @@ export class BehaviorExecutor {
     rt: AgentRuntime,
     nowMs: number,
     dtSec: number,
+    zone: Zone | null,
   ): void {
     const directive = rt.directive;
     const enemies: AgentState[] = [];
@@ -103,7 +119,18 @@ export class BehaviorExecutor {
       return;
     }
 
-    // 2. Zone override — no zone in Phase 2.
+    // 2. Zone override (SPEC.md §3.1 rule 2) — the one instinct a directive can
+    //    never disable: if we're outside the safe circle (or it's closing onto
+    //    us within the margin), run inward toward safety.
+    if (zone) {
+      const c = zone.center;
+      const dist = Math.hypot(self.x - c.x, self.y - c.y);
+      const safeRadius = zone.currentRadius - ZONE_SAFE_MARGIN;
+      if (dist > safeRadius) {
+        this.navigate(self, rt, safeSpot(self, c, zone.currentRadius), dtSec);
+        return;
+      }
+    }
 
     // 3. Combat.
     if (target && directive.engage_range > 0 && stanceAttacks(directive.stance)) {
@@ -120,12 +147,12 @@ export class BehaviorExecutor {
           }
           return;
         }
-        if (stanceChases(directive.stance)) {
-          this.navigate(self, rt, { x: target.x, y: target.y }, dtSec);
-          return;
-        }
-        // In range but this stance holds ground and isn't in melee yet → wait.
-        this.stand(self, rt);
+        // Within engage_range but not yet in melee → close the gap. Every
+        // attacking stance does this; what differs between stances is their
+        // move_target (a hunter chases across the map, a holder only fights what
+        // enters its engage_range and then returns to its post). Pursuit beyond
+        // engage_range never happens: this whole branch is gated on it.
+        this.navigate(self, rt, { x: target.x, y: target.y }, dtSec);
         return;
       }
     }
@@ -147,6 +174,8 @@ export class BehaviorExecutor {
 
   /** Path to `dest` (recomputing only when its tile changes) and step along it. */
   private navigate(self: AgentState, rt: AgentRuntime, dest: Point, dtSec: number): void {
+    // Never path into water/cover — snap a blocked destination to solid ground.
+    dest = clampToLand(dest.x, dest.y);
     const goalTile = pxToTile(dest.x, dest.y);
     const goalKey = `${goalTile.col},${goalTile.row}`;
     if (goalKey !== rt.goalKey || rt.path.length === 0) {
@@ -239,6 +268,18 @@ function retreatDest(
   return LANDMARK_COORDS[retreatTo];
 }
 
+/**
+ * A point well inside the safe circle along the agent's own bearing from the
+ * center — the shortest route to safety, snapped to walkable ground.
+ */
+function safeSpot(self: AgentState, center: Point, radius: number): Point {
+  const dx = self.x - center.x;
+  const dy = self.y - center.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const inner = Math.max(0, radius - ZONE_SAFE_MARGIN - 24);
+  return nearestWalkable(center.x + (dx / d) * inner, center.y + (dy / d) * inner);
+}
+
 function fleePoint(self: AgentState, target: { x: number; y: number }): Point {
   const dx = self.x - target.x;
   const dy = self.y - target.y;
@@ -252,8 +293,4 @@ function fleePoint(self: AgentState, target: { x: number; y: number }): Point {
 
 function stanceAttacks(stance: Directive["stance"]): boolean {
   return stance !== "evasive";
-}
-
-function stanceChases(stance: Directive["stance"]): boolean {
-  return stance === "aggressive" || stance === "defensive";
 }

@@ -45,10 +45,10 @@ export const DirectiveSchema = z.object({
 export type Directive = z.infer<typeof DirectiveSchema>;
 
 /**
- * Temporary hardcoded directive every agent runs in Phase 2 (SPEC.md §8): charge
- * the nearest enemy and fight. Replaced per-agent by LLM-produced directives in
- * Phase 4 — the behavior executor already treats it as just one possible
- * directive, not a special case.
+ * Hardcoded directive a human-seated agent runs until the LLM pipeline lands
+ * (SPEC.md §8): charge the nearest enemy and fight. Phase 4 replaces it per
+ * agent with LLM-produced directives — the behavior executor already treats it
+ * as just one possible directive, not a special case.
  */
 export const DEFAULT_DIRECTIVE: Directive = {
   stance: "aggressive",
@@ -59,3 +59,61 @@ export const DEFAULT_DIRECTIVE: Directive = {
   retreat_to: "away_from_enemy",
   acknowledgement: "Charging the nearest enemy.",
 };
+
+/**
+ * Bot personalities that fill empty match slots (SPEC.md §8 Phase 3: "an
+ * aggressor, a camper, a coward…"). Each is just an ordinary directive — a free
+ * way to populate a match with no LLM.
+ *
+ * They're spread across the island's landmarks on purpose: only the hunter
+ * roams, while the others hold different corners. So the early game is a
+ * stand-off and it's the shrinking zone that squeezes the survivors together —
+ * a real battle-royale arc that plays out over minutes, not a 15-second pile-up
+ * at the center. Seats are assigned a shuffled subset each match (see MatchRoom),
+ * so the mix and the winner vary.
+ */
+export const BOT_DIRECTIVES: readonly Directive[] = [
+  // Hunter — roams and charges the nearest enemy to the death.
+  DEFAULT_DIRECTIVE,
+  // Castle guard — holds the castle, fights anything that enters its reach.
+  {
+    stance: "hold_position",
+    move_target: { type: "landmark", name: "castle" },
+    engage_range: 180,
+    target_priority: "closest",
+    retreat_hp: 0.3,
+    retreat_to: "castle",
+    acknowledgement: "Holding the castle.",
+  },
+  // Gold baron — camps the gold mine and picks the biggest threat first.
+  {
+    stance: "hold_position",
+    move_target: { type: "landmark", name: "gold_mine" },
+    engage_range: 180,
+    target_priority: "strongest",
+    retreat_hp: 0.35,
+    retreat_to: "gold_mine",
+    acknowledgement: "Guarding the gold.",
+  },
+  // Lake lurker — defends the lake and pulls back there when hurt.
+  {
+    stance: "defensive",
+    move_target: { type: "landmark", name: "lake" },
+    engage_range: 150,
+    target_priority: "closest",
+    retreat_hp: 0.45,
+    retreat_to: "lake",
+    acknowledgement: "Lurking by the lake.",
+  },
+  // Coward — never picks a fight, just stays away from everyone (SPEC's runner);
+  // usually the zone is what finally corners it.
+  {
+    stance: "evasive",
+    move_target: null,
+    engage_range: 0, // never attacks
+    target_priority: "closest", // still needs a target to flee *from*
+    retreat_hp: 0.6,
+    retreat_to: "away_from_enemy",
+    acknowledgement: "Staying out of everyone's way.",
+  },
+];

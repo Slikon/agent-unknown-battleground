@@ -1,4 +1,4 @@
-import { Server } from "@colyseus/core";
+import { Server, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { MatchRoom } from "./rooms/MatchRoom";
 
@@ -12,14 +12,18 @@ const gameServer = new Server({
   transport: new WebSocketTransport(),
 });
 
-// Register the match room handler. Colyseus instantiates a MatchRoom on demand
-// when the first client joins "match".
+// Register the match room handler.
 gameServer.define("match", MatchRoom);
 
 gameServer
   .listen(port, "0.0.0.0")
-  .then(() => {
+  .then(async () => {
     console.log(`⚔️  AUB server listening on ws://0.0.0.0:${port}`);
+    // Create the match room up front so a full battle royale runs with zero
+    // humans (SPEC.md §8 Phase 3 done-criterion). It never disposes
+    // (autoDispose = false); clients joinOrCreate straight into it.
+    await matchMaker.createRoom("match", {});
+    console.log("🏝️  Match room created — a bot match is already underway");
   })
   .catch((err: unknown) => {
     console.error("Failed to start AUB server:", err);

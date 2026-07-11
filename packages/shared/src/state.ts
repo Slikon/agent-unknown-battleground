@@ -1,6 +1,7 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
-import { WARRIOR_MAX_HP } from "./constants";
-import type { AgentColor } from "./constants";
+import { WARRIOR_MAX_HP, ZONE_START_RADIUS } from "./constants";
+import type { AgentColor, MatchPhase } from "./constants";
+import { ISLAND_CENTER } from "./map";
 
 /**
  * Synchronized match state — the wire contract between the authoritative
@@ -16,11 +17,17 @@ export type AgentDir = "left" | "right";
 export type AgentAnim = "idle" | "run" | "attack";
 
 export class AgentState extends Schema {
-  /** Colyseus sessionId of the owning client (also this agent's map key). */
+  /** Unique agent key within the match (client sessionId, or "bot-N"). */
   @type("string") id = "";
 
   /** Faction color — unique per agent within a match. */
   @type("string") color: AgentColor = "blue";
+
+  /** Display name for the killfeed / winner screen (color-based until Phase 5 lobby). */
+  @type("string") name = "";
+
+  /** True for AI-filled slots (no connected client). */
+  @type("boolean") bot = false;
 
   @type("number") x = 0;
   @type("number") y = 0;
@@ -32,7 +39,35 @@ export class AgentState extends Schema {
   @type("number") hp = WARRIOR_MAX_HP;
 }
 
+/**
+ * The shrinking safe circle (SPEC.md §6). Center + radius drive the client's
+ * zone ring and darkened danger area; `nextShrinkSec` feeds the mini-UI timer.
+ */
+export class ZoneState extends Schema {
+  @type("number") x = ISLAND_CENTER.x;
+  @type("number") y = ISLAND_CENTER.y;
+  @type("number") radius = ZONE_START_RADIUS;
+
+  /** True while the circle is actively closing (vs. paused between shrinks). */
+  @type("boolean") shrinking = false;
+
+  /** Seconds until the next shrink begins (0 while shrinking). */
+  @type("number") nextShrinkSec = 0;
+}
+
 export class MatchState extends Schema {
-  /** Keyed by client sessionId. */
+  /** Keyed by agent id (client sessionId, or "bot-N"). Holds only living agents. */
   @type({ map: AgentState }) agents = new MapSchema<AgentState>();
+
+  /** lobby → countdown → live → finished → lobby (SPEC.md §8 Phase 3). */
+  @type("string") phase: MatchPhase = "lobby";
+
+  /** Seconds left in a timed phase (countdown / finished), for the UI. */
+  @type("number") phaseTimer = 0;
+
+  @type(ZoneState) zone = new ZoneState();
+
+  /** Winner of the finished match (empty until someone wins). */
+  @type("string") winnerColor = "";
+  @type("string") winnerName = "";
 }

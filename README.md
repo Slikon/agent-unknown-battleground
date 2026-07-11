@@ -7,8 +7,12 @@ The model is the commander, not the muscles: it's called only when you issue an
 order, never inside the game loop.
 
 The full design lives in [`SPEC.md`](./SPEC.md). This README covers running the
-project. **Current status: Phase 0 — skeleton** (monorepo, empty Phaser scene,
-empty Colyseus server). No game logic yet.
+project. **Current status: Phase 3 — battle-royale loop.** The authoritative
+server runs a full match on its own: 5 warriors (live players + AI bots) spawn
+around an island, a behavior executor drives each one from its directive, a
+shrinking zone squeezes the survivors together, and the last one standing wins —
+then it restarts. The LLM order pipeline arrives in Phase 4; for now every agent
+runs a hardcoded directive.
 
 ## Stack
 
@@ -39,10 +43,13 @@ pnpm dev
 
 Then open the client in a browser:
 
-- **http://localhost:5173** — you should see a dark canvas with **“AUB — Phase 0”**.
+- **http://localhost:5173** — you should see the island and a match already in
+  progress (the server runs matches with bots even before anyone connects).
+  Opening a second window drops another warrior in; both windows see everyone.
 
-The server logs `⚔️  AUB server listening on ws://0.0.0.0:2567`. Nothing connects
-to it yet in Phase 0 — the client is standalone until Phase 1.
+The server logs `⚔️  AUB server listening on ws://0.0.0.0:2567` and creates the
+match room at boot, so an all-bot match plays itself out to a winner with zero
+humans connected.
 
 ### Running them separately
 
