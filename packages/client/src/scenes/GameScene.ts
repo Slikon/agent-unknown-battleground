@@ -46,6 +46,17 @@ const HP_FILL_W = 40;
 const HP_FILL_H = 6;
 const HP_BAR_OFFSET = 36; // px above the sprite's center
 
+// Name tag above the HP bar: faction color per agent, readable at full-island
+// zoom ("black" gets grey — black text vanishes on the dark sea/fog).
+const TAG_OFFSET = 44; // px above the sprite's center (bottom of the text)
+const TAG_COLORS: Record<string, string> = {
+  blue: "#5db2ff",
+  red: "#ff6b5e",
+  purple: "#c98aff",
+  yellow: "#ffd54f",
+  black: "#c4c4c4",
+};
+
 const BAR_DEPTH = 900_000; // HP bars above all units
 const FOG_DEPTH = -500; // zone darkening: above ground, below units
 const RING_DEPTH = 2_000_000; // zone boundary: above everything
@@ -54,6 +65,7 @@ interface UnitView {
   sprite: Phaser.GameObjects.Sprite;
   barBase: Phaser.GameObjects.Image;
   barFill: Phaser.GameObjects.Image;
+  tag: Phaser.GameObjects.Text;
 }
 
 /**
@@ -269,25 +281,50 @@ export class GameScene extends Phaser.Scene {
         SMALLBAR_FILL.frame,
       )
       .setOrigin(0, 0.5)
+      .setDisplaySize(HP_FILL_W, HP_FILL_H) // spawn at full HP; update() lerps from here
       .setDepth(BAR_DEPTH + 1);
 
-    this.units.set(sessionId, { sprite, barBase, barFill });
+    // Colour/name tag — the base colour name only ("Blue", not "Blue (bot)"):
+    // shorter reads better above a 1-tile unit at full-island zoom.
+    const tag = this.add
+      .text(agent.x, agent.y - TAG_OFFSET, agent.name.replace(" (bot)", ""), {
+        fontFamily: "monospace",
+        fontSize: "17px",
+        fontStyle: "bold",
+        color: TAG_COLORS[agent.color] ?? "#ffffff",
+        stroke: "#000000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(BAR_DEPTH + 2);
+
+    this.units.set(sessionId, { sprite, barBase, barFill, tag });
   }
 
-  /** A unit died (removed from state): explode at its spot, then clean up. */
+  /**
+   * A unit was removed from state. Mid-match that means it died — explode at
+   * its spot. On the finished→lobby reset the server clears *all* agents (the
+   * winner included) in the same patch that sets phase="lobby"; schema
+   * callbacks fire after the whole patch applies, so phase is already "lobby"
+   * for those removals and no explosion plays. (The final kill of a match
+   * arrives alongside phase="finished" — that one must still explode.)
+   */
   private killUnit(sessionId: string): void {
     const view = this.units.get(sessionId);
     if (!view) return;
 
-    const boom = this.add
-      .sprite(view.sprite.x, view.sprite.y, EXPLOSION_SHEET.key)
-      .setDepth(view.sprite.y + 5000)
-      .play(EXPLOSION_ANIM);
-    boom.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => boom.destroy());
+    if (this.room?.state.phase !== "lobby") {
+      const boom = this.add
+        .sprite(view.sprite.x, view.sprite.y, EXPLOSION_SHEET.key)
+        .setDepth(view.sprite.y + 5000)
+        .play(EXPLOSION_ANIM);
+      boom.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => boom.destroy());
+    }
 
     view.sprite.destroy();
     view.barBase.destroy();
     view.barFill.destroy();
+    view.tag.destroy();
     this.units.delete(sessionId);
   }
 
@@ -305,7 +342,7 @@ export class GameScene extends Phaser.Scene {
     room.state.agents.forEach((agent, sessionId) => {
       const view = this.units.get(sessionId);
       if (!view) return;
-      const { sprite, barBase, barFill } = view;
+      const { sprite, barBase, barFill, tag } = view;
 
       sprite.x += (agent.x - sprite.x) * alpha;
       sprite.y += (agent.y - sprite.y) * alpha;
@@ -318,8 +355,13 @@ export class GameScene extends Phaser.Scene {
       const barY = sprite.y - HP_BAR_OFFSET;
       barBase.setPosition(sprite.x, barY);
       barFill.setPosition(sprite.x - HP_FILL_W / 2, barY);
+      tag.setPosition(sprite.x, sprite.y - TAG_OFFSET);
+      // Ease the fill toward the server HP with the same lerp as positions, so
+      // damage drains the bar instead of snapping it.
       const frac = Phaser.Math.Clamp(agent.hp / WARRIOR_MAX_HP, 0, 1);
-      barFill.setDisplaySize(Math.max(0.001, HP_FILL_W * frac), HP_FILL_H);
+      const targetW = Math.max(0.001, HP_FILL_W * frac);
+      const w = barFill.displayWidth + (targetW - barFill.displayWidth) * alpha;
+      barFill.setDisplaySize(w, HP_FILL_H);
       barFill.setTintFill(hpColor(frac));
       barFill.setVisible(frac > 0);
     });

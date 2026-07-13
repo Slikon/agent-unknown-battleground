@@ -113,9 +113,13 @@ export class MatchRoom extends Room<{ state: MatchState }> {
   }
 
   private enterLobby(): void {
-    // Wipe the previous match.
+    // Wipe the previous match — including the zone ring, which otherwise stays
+    // at the old match's tiny final circle and fogs the whole island during
+    // lobby/countdown.
     this.state.agents.clear();
     this.executor.clear();
+    this.zone.reset();
+    this.zone.writeTo(this.state.zone);
     this.state.winnerColor = "";
     this.state.winnerName = "";
     this.state.phaseTimer = LOBBY_SEC;
