@@ -12,19 +12,42 @@ import {
   WORLD_WIDTH,
   ZONE_SAFE_MARGIN,
   clampToLand,
-  nearestWalkable,
-  pxToTile,
 } from "@aub/shared";
 import type { Zone } from "./Zone";
 import { Pathfinder, type Point } from "./Pathfinder";
+
+/**
+ * Facing only flips when the horizontal delta exceeds this (px). Sub-pixel /
+ * near-vertical movement used to flip `dir` every tick, making units look like
+ * they spin.
+ */
+const DIR_FLIP_MIN_PX = 3;
+
+/**
+ * A committed destination is kept until the desired one drifts at least this
+ * far (px). Recomputing the goal every tick lets destinations that depend on
+ * the agent's own position (flee points, land-snapped water targets) alternate
+ * between two spots each tick — the unit vibrates in place. Must stay below
+ * WARRIOR_ATTACK_RANGE so a pursuer's stale goal can never strand it just out
+ * of melee reach.
+ */
+const GOAL_STICKINESS_PX = 32;
+
+/**
+ * An evasive agent only flees enemies inside this radius (px); beyond it there
+ * is nothing to run from and it stands its ground.
+ */
+const FLEE_TRIGGER_RADIUS = 300;
 
 /** Per-agent server-only state (never synced): its directive + movement/combat bookkeeping. */
 interface AgentRuntime {
   directive: Directive;
   lastAttackMs: number;
   path: Point[];
-  /** Tile key the current path targets; recompute when the goal tile changes. */
-  goalKey: string | null;
+  /** Destination the current path was computed for (goal stickiness). */
+  goal: Point | null;
+  /** Zone override latched on (hysteresis — see stepAgent rule 2). */
+  zoneOverride: boolean;
 }
 
 /**
@@ -35,7 +58,7 @@ interface AgentRuntime {
  *
  * Priority per tick (top to bottom):
  *   1. HP below retreat_hp?            → retreat
- *   2. Zone closing in?                → (skipped: no zone until Phase 3)
+ *   2. Zone closing in?                → run inward (latched until well inside)
  *   3. Enemy in engage_range + stance
  *      allows attacking?               → combat (close in / attack)
  *   4. Has a move_target?              → move (A* to it)
@@ -50,7 +73,8 @@ export class BehaviorExecutor {
       directive,
       lastAttackMs: 0,
       path: [],
-      goalKey: null,
+      goal: null,
+      zoneOverride: false,
     });
   }
 
@@ -68,7 +92,7 @@ export class BehaviorExecutor {
     if (rt) {
       rt.directive = directive;
       rt.path = [];
-      rt.goalKey = null;
+      rt.goal = null;
     }
   }
 
@@ -121,13 +145,22 @@ export class BehaviorExecutor {
 
     // 2. Zone override (SPEC.md §3.1 rule 2) — the one instinct a directive can
     //    never disable: if we're outside the safe circle (or it's closing onto
-    //    us within the margin), run inward toward safety.
+    //    us within the margin), run inward toward safety. Latched with
+    //    hysteresis: it engages near the edge but only releases once the agent
+    //    is comfortably inside (zoneInnerRadius), so the directive can't shove
+    //    the unit straight back across the boundary and flip-flop control every
+    //    tick. While engaged it steers at the zone centre — a goal that doesn't
+    //    shift with the agent's own bearing. The companion clampToZone on rules
+    //    3–5 keeps directives from marching a released unit back out (retreat,
+    //    rule 1, deliberately stays unclamped per the SPEC's priority order).
     if (zone) {
       const c = zone.center;
       const dist = Math.hypot(self.x - c.x, self.y - c.y);
-      const safeRadius = zone.currentRadius - ZONE_SAFE_MARGIN;
-      if (dist > safeRadius) {
-        this.navigate(self, rt, safeSpot(self, c, zone.currentRadius), dtSec);
+      const engageRadius = zone.currentRadius - ZONE_SAFE_MARGIN;
+      if (dist > engageRadius) rt.zoneOverride = true;
+      else if (dist <= zoneInnerRadius(zone)) rt.zoneOverride = false;
+      if (rt.zoneOverride) {
+        this.navigate(self, rt, c, dtSec);
         return;
       }
     }
@@ -140,7 +173,7 @@ export class BehaviorExecutor {
           face(self, target);
           self.anim = "attack";
           rt.path = [];
-          rt.goalKey = null;
+          rt.goal = null;
           if (nowMs - rt.lastAttackMs >= WARRIOR_ATTACK_COOLDOWN_MS) {
             target.hp = Math.max(0, target.hp - WARRIOR_DAMAGE);
             rt.lastAttackMs = nowMs;
@@ -152,7 +185,7 @@ export class BehaviorExecutor {
         // move_target (a hunter chases across the map, a holder only fights what
         // enters its engage_range and then returns to its post). Pursuit beyond
         // engage_range never happens: this whole branch is gated on it.
-        this.navigate(self, rt, { x: target.x, y: target.y }, dtSec);
+        this.navigate(self, rt, clampToZone({ x: target.x, y: target.y }, zone), dtSec);
         return;
       }
     }
@@ -160,27 +193,29 @@ export class BehaviorExecutor {
     // 4. Move toward the directive's target.
     const dest = resolveMoveTarget(directive.move_target, target);
     if (dest) {
-      this.navigate(self, rt, dest, dtSec);
+      this.navigate(self, rt, clampToZone(dest, zone), dtSec);
       return;
     }
 
     // 5. Idle behavior per stance.
-    if (directive.stance === "evasive" && target) {
-      this.navigate(self, rt, fleePoint(self, target), dtSec);
+    if (directive.stance === "evasive" && target && distance(self, target) <= FLEE_TRIGGER_RADIUS) {
+      this.navigate(self, rt, clampToZone(fleePoint(self, target), zone), dtSec);
       return;
     }
     this.stand(self, rt);
   }
 
-  /** Path to `dest` (recomputing only when its tile changes) and step along it. */
+  /** Path to `dest` (sticking with the committed goal until it drifts) and step along it. */
   private navigate(self: AgentState, rt: AgentRuntime, dest: Point, dtSec: number): void {
     // Never path into water/cover — snap a blocked destination to solid ground.
     dest = clampToLand(dest.x, dest.y);
-    const goalTile = pxToTile(dest.x, dest.y);
-    const goalKey = `${goalTile.col},${goalTile.row}`;
-    if (goalKey !== rt.goalKey || rt.path.length === 0) {
+    if (!rt.goal || distance(rt.goal, dest) >= GOAL_STICKINESS_PX) {
       rt.path = this.pathfinder.findPath({ x: self.x, y: self.y }, dest);
-      rt.goalKey = goalKey;
+      rt.goal = dest;
+    } else if (rt.path.length === 0) {
+      // Path exhausted but the goal barely moved — re-path to the committed
+      // goal (a no-op step once we're standing on it).
+      rt.path = this.pathfinder.findPath({ x: self.x, y: self.y }, rt.goal);
     }
     const moved = this.advance(self, rt, dtSec);
     self.anim = moved ? "run" : "idle";
@@ -190,6 +225,7 @@ export class BehaviorExecutor {
   private advance(self: AgentState, rt: AgentRuntime, dtSec: number): boolean {
     let remaining = MOVE_SPEED * dtSec;
     let moved = false;
+    const startX = self.x;
     while (remaining > 1e-6 && rt.path.length > 0) {
       const wp = rt.path[0];
       const dx = wp.x - self.x;
@@ -207,15 +243,17 @@ export class BehaviorExecutor {
         remaining = 0;
         moved = true;
       }
-      if (dx < -1e-6) self.dir = "left";
-      else if (dx > 1e-6) self.dir = "right";
     }
+    // Face where we actually went this tick, not each intermediate waypoint.
+    const netDx = self.x - startX;
+    if (netDx < -DIR_FLIP_MIN_PX) self.dir = "left";
+    else if (netDx > DIR_FLIP_MIN_PX) self.dir = "right";
     return moved;
   }
 
   private stand(self: AgentState, rt: AgentRuntime): void {
     rt.path = [];
-    rt.goalKey = null;
+    rt.goal = null;
     self.anim = "idle";
   }
 }
@@ -225,8 +263,9 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
 }
 
 function face(self: AgentState, target: { x: number }): void {
-  if (target.x < self.x) self.dir = "left";
-  else if (target.x > self.x) self.dir = "right";
+  const dx = target.x - self.x;
+  if (dx < -DIR_FLIP_MIN_PX) self.dir = "left";
+  else if (dx > DIR_FLIP_MIN_PX) self.dir = "right";
 }
 
 function selectTarget(
@@ -269,15 +308,27 @@ function retreatDest(
 }
 
 /**
- * A point well inside the safe circle along the agent's own bearing from the
- * center — the shortest route to safety, snapped to walkable ground.
+ * How deep inside the safe circle counts as "comfortably in": where the zone
+ * override releases, and the deepest point clampToZone pulls a destination to.
+ * Sharing one value means a just-released unit is already standing where its
+ * clamped directive wants it — no walk-back oscillation at the edge. The
+ * engage/2 floor keeps a workable hysteresis gap once the circle gets small.
  */
-function safeSpot(self: AgentState, center: Point, radius: number): Point {
-  const dx = self.x - center.x;
-  const dy = self.y - center.y;
-  const d = Math.hypot(dx, dy) || 1;
-  const inner = Math.max(0, radius - ZONE_SAFE_MARGIN - 24);
-  return nearestWalkable(center.x + (dx / d) * inner, center.y + (dy / d) * inner);
+function zoneInnerRadius(zone: Zone): number {
+  const engageRadius = zone.currentRadius - ZONE_SAFE_MARGIN;
+  return Math.max(zone.currentRadius - 2 * ZONE_SAFE_MARGIN, engageRadius * 0.5);
+}
+
+/** Pull a destination outside the safe circle back onto its inner ring. */
+function clampToZone(dest: Point, zone: Zone | null): Point {
+  if (!zone) return dest;
+  const c = zone.center;
+  const dx = dest.x - c.x;
+  const dy = dest.y - c.y;
+  const d = Math.hypot(dx, dy);
+  const max = zoneInnerRadius(zone);
+  if (d <= max) return dest;
+  return { x: c.x + (dx / d) * max, y: c.y + (dy / d) * max };
 }
 
 function fleePoint(self: AgentState, target: { x: number; y: number }): Point {
