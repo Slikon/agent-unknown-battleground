@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Callbacks, Client, type Room } from "@colyseus/sdk";
 import {
   type AgentState,
+  BUSH_TILES,
   ISLAND_CENTER,
   ISLAND_RADIUS,
   LAKE,
@@ -10,13 +11,24 @@ import {
   OBSTACLE_TILES,
   TILE_SIZE,
   WARRIOR_MAX_HP,
+  WATER_ROCK_TILES,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   tileCenterPx,
 } from "@aub/shared";
 import { warriorAnimKey } from "../assets/warrior";
 import { EXPLOSION_ANIM, EXPLOSION_SHEET } from "../assets/explosion";
-import { CASTLE, GOLD, GRASS_TEXTURE, ROCK, TREE, WATER } from "../assets/terrain";
+import {
+  BUSHES,
+  CASTLE,
+  FOAM,
+  GOLDS,
+  GRASS_TEXTURE,
+  ROCKS,
+  TREES,
+  WATER,
+  WATER_ROCKS,
+} from "../assets/terrain";
 import { SMALLBAR_BASE, SMALLBAR_FILL } from "../assets/ui";
 import { MatchOverlay } from "../ui/MatchOverlay";
 
@@ -88,6 +100,26 @@ export class GameScene extends Phaser.Scene {
     // Sea across the whole world.
     this.add.tileSprite(0, 0, WORLD_WIDTH, WORLD_HEIGHT, WATER.key).setOrigin(0).setDepth(-1000);
 
+    // Animated foam lapping at the coast, half-hidden under the beach rim.
+    // Per-sprite size/radius/rotation wobble keeps the ring from reading as a
+    // regular dashed border.
+    const foamStep = 1.75 * TILE_SIZE;
+    const foamCount = Math.ceil((2 * Math.PI * ISLAND_RADIUS) / foamStep);
+    for (let i = 0; i < foamCount; i++) {
+      const a = (i / foamCount) * Math.PI * 2;
+      const h = (((i + 1) * 2654435761) >>> 0) / 4294967296; // cheap per-index hash
+      const size = (2.7 + 0.9 * h) * TILE_SIZE;
+      // Center the splash body inside the coast so the beach rim hides it and
+      // only the animated foam edge laps beyond the shoreline.
+      const r = ISLAND_RADIUS - 20 + (h - 0.5) * 16;
+      this.add
+        .sprite(ISLAND_CENTER.x + Math.cos(a) * r, ISLAND_CENTER.y + Math.sin(a) * r, FOAM.key)
+        .setDisplaySize(size, size)
+        .setRotation((Math.floor(h * 4) * Math.PI) / 2)
+        .setDepth(-960)
+        .play({ key: FOAM.anim, startFrame: i % FOAM.frames });
+    }
+
     // Sandy beach rim just under the grass.
     this.add.circle(ISLAND_CENTER.x, ISLAND_CENTER.y, ISLAND_RADIUS + 7, 0xd8c48f).setDepth(-950);
 
@@ -101,9 +133,41 @@ export class GameScene extends Phaser.Scene {
     islandMask.fillCircle(ISLAND_CENTER.x, ISLAND_CENTER.y, ISLAND_RADIUS);
     grass.setMask(islandMask.createGeometryMask());
 
-    // The lake (a water pool on the grass).
+    // The lake (a water pool on the grass), with its own foam ring clipped to
+    // the lake circle so no foam spills onto the grass.
     this.add.circle(LAKE.x, LAKE.y, LAKE.radius, 0x3f7a9c).setDepth(-850);
     this.add.circle(LAKE.x, LAKE.y, LAKE.radius - 6, 0x5aa0c4).setDepth(-849);
+    const lakeMaskShape = this.make.graphics({}, false);
+    lakeMaskShape.fillStyle(0xffffff);
+    lakeMaskShape.fillCircle(LAKE.x, LAKE.y, LAKE.radius - 2);
+    const lakeMask = lakeMaskShape.createGeometryMask();
+    const lakeFoamCount = Math.ceil((2 * Math.PI * LAKE.radius) / foamStep);
+    for (let i = 0; i < lakeFoamCount; i++) {
+      const a = (i / lakeFoamCount) * Math.PI * 2;
+      const h = (((i + 7) * 2654435761) >>> 0) / 4294967296;
+      const size = (2.2 + 0.8 * h) * TILE_SIZE;
+      // Center the splash just outside the lake so only its inner edge shows
+      // through the mask as a thin shore ring.
+      const lr = LAKE.radius + 10;
+      this.add
+        .sprite(LAKE.x + Math.cos(a) * lr, LAKE.y + Math.sin(a) * lr, FOAM.key)
+        .setDisplaySize(size, size)
+        .setRotation((Math.floor(h * 4) * Math.PI) / 2)
+        .setDepth(-848)
+        .setMask(lakeMask)
+        .play({ key: FOAM.anim, startFrame: (i * 3) % FOAM.frames });
+    }
+
+    // Bobbing rock clusters out at sea / in the lake.
+    for (const d of WATER_ROCK_TILES) {
+      const { x, y } = tileCenterPx(d.col, d.row);
+      const wr = WATER_ROCKS[d.variant];
+      this.add
+        .sprite(x + d.jitterX, y + d.jitterY, wr.key)
+        .setDisplaySize(1.6 * TILE_SIZE * d.sizeMul, 1.6 * TILE_SIZE * d.sizeMul)
+        .setDepth(-940)
+        .play({ key: wr.anim, startFrame: (d.col + d.row) % wr.frames });
+    }
 
     // Landmark cover: the castle building.
     const castle = LANDMARK_COORDS.castle;
@@ -113,27 +177,40 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 0.78)
       .setDepth(castle.y);
 
-    // Obstacle decorations (impassable) — trees, rocks, gold stones.
+    // Bushes — walkable decor scattered over open grass.
+    for (const d of BUSH_TILES) {
+      const { x, y } = tileCenterPx(d.col, d.row);
+      this.add
+        .sprite(x + d.jitterX, y + d.jitterY, BUSHES[d.variant].key, 0)
+        .setDisplaySize(1.6 * TILE_SIZE * d.sizeMul, 1.6 * TILE_SIZE * d.sizeMul)
+        .setOrigin(0.5, 0.65)
+        .setDepth(y);
+    }
+
+    // Obstacle decorations (impassable) — trees, rocks, gold stones. Variant,
+    // jitter and size come from map.ts so the look is deterministic.
     for (const o of OBSTACLE_TILES) {
       const { x, y } = tileCenterPx(o.col, o.row);
+      const px = x + o.jitterX;
+      const py = y + o.jitterY;
       if (o.kind === "tree") {
         this.add
-          .sprite(x, y, TREE.key, 0)
-          .setDisplaySize(2.3 * TILE_SIZE, 2.3 * TILE_SIZE)
+          .sprite(px, py, TREES[o.variant].key, 0)
+          .setDisplaySize(2.4 * TILE_SIZE * o.sizeMul, 2.4 * TILE_SIZE * o.sizeMul)
           .setOrigin(0.5, 0.72)
-          .setDepth(y);
+          .setDepth(py);
       } else if (o.kind === "rock") {
         this.add
-          .image(x, y, ROCK.key)
-          .setDisplaySize(1.25 * TILE_SIZE, 1.25 * TILE_SIZE)
+          .image(px, py, ROCKS[o.variant].key)
+          .setDisplaySize(1.4 * TILE_SIZE * o.sizeMul, 1.4 * TILE_SIZE * o.sizeMul)
           .setOrigin(0.5, 0.6)
-          .setDepth(y);
+          .setDepth(py);
       } else {
         this.add
-          .image(x, y, GOLD.key)
-          .setDisplaySize(1.1 * TILE_SIZE, 1.1 * TILE_SIZE)
+          .image(px, py, GOLDS[o.variant].key)
+          .setDisplaySize(1.7 * TILE_SIZE * o.sizeMul, 1.7 * TILE_SIZE * o.sizeMul)
           .setOrigin(0.5, 0.6)
-          .setDepth(y);
+          .setDepth(py);
       }
     }
   }

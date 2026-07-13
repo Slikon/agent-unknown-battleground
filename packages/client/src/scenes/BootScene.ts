@@ -7,7 +7,18 @@ import {
   warriorSheetUrl,
 } from "../assets/warrior";
 import { EXPLOSION_ANIM, EXPLOSION_SHEET } from "../assets/explosion";
-import { CASTLE, GOLD, GRASS_TEXTURE, ROCK, TILESET, TREE, WATER } from "../assets/terrain";
+import {
+  BUSHES,
+  CASTLE,
+  FOAM,
+  GOLDS,
+  GRASS_TEXTURE,
+  ROCKS,
+  TILESET,
+  TREES,
+  WATER,
+  WATER_ROCKS,
+} from "../assets/terrain";
 import { SMALLBAR_BASE, SMALLBAR_FILL } from "../assets/ui";
 
 /**
@@ -48,12 +59,28 @@ export class BootScene extends Phaser.Scene {
     // Terrain.
     this.load.image(TILESET.key, TILESET.url);
     this.load.image(WATER.key, WATER.url);
-    this.load.spritesheet(TREE.key, TREE.url, {
-      frameWidth: TREE.frameWidth,
-      frameHeight: TREE.frameHeight,
-    });
-    this.load.image(ROCK.key, ROCK.url);
-    this.load.image(GOLD.key, GOLD.url);
+    for (const tree of TREES) {
+      this.load.spritesheet(tree.key, tree.url, {
+        frameWidth: tree.frameWidth,
+        frameHeight: tree.frameHeight,
+      });
+    }
+    for (const rock of ROCKS) this.load.image(rock.key, rock.url);
+    for (const gold of GOLDS) this.load.image(gold.key, gold.url);
+    for (const bush of BUSHES) {
+      this.load.spritesheet(bush.key, bush.url, {
+        frameWidth: bush.frameWidth,
+        frameHeight: bush.frameHeight,
+      });
+    }
+    // Foam frames are cut by hand in create() (offset grid) — load whole image.
+    this.load.image(FOAM.key, FOAM.url);
+    for (const wr of WATER_ROCKS) {
+      this.load.spritesheet(wr.key, wr.url, {
+        frameWidth: wr.frameWidth,
+        frameHeight: wr.frameHeight,
+      });
+    }
     this.load.image(CASTLE.key, CASTLE.url);
 
     // HP bars.
@@ -84,6 +111,36 @@ export class BootScene extends Phaser.Scene {
       frameRate: EXPLOSION_SHEET.frameRate,
       repeat: 0,
     });
+
+    // Cut the foam's frames on the half-frame-offset grid (see FOAM docs).
+    const foamTex = this.textures.get(FOAM.key);
+    const foamFrames: { key: string; frame: string }[] = [];
+    for (let i = 0; i < FOAM.frames; i++) {
+      const name = `splash-${i}`;
+      foamTex.add(
+        name,
+        0,
+        FOAM.frameOffsetX + i * FOAM.frameWidth,
+        0,
+        FOAM.frameWidth,
+        FOAM.frameHeight,
+      );
+      foamFrames.push({ key: FOAM.key, frame: name });
+    }
+    this.anims.create({
+      key: FOAM.anim,
+      frames: foamFrames,
+      frameRate: FOAM.frameRate,
+      repeat: -1,
+    });
+    for (const wr of WATER_ROCKS) {
+      this.anims.create({
+        key: wr.anim,
+        frames: this.anims.generateFrameNumbers(wr.key, { start: 0, end: wr.frames - 1 }),
+        frameRate: wr.frameRate,
+        repeat: -1,
+      });
+    }
 
     // Crop one solid grass tile out of the autotile sheet into its own 64×64
     // texture so it tiles seamlessly across the island. A plain Canvas drawImage
