@@ -25,13 +25,33 @@ const DIR_FLIP_MIN_PX = 3;
 
 /**
  * A committed destination is kept until the desired one drifts at least this
- * far (px). Recomputing the goal every tick lets destinations that depend on
- * the agent's own position (flee points, land-snapped water targets) alternate
- * between two spots each tick — the unit vibrates in place. Must stay below
- * WARRIOR_ATTACK_RANGE so a pursuer's stale goal can never strand it just out
- * of melee reach.
+ * far (px). Recomputing the goal every tick lets destinations derived from
+ * moving inputs (flee points, zone-clamped ring points, land-snapped water
+ * targets) alternate between two spots — the unit vibrates in place. Combat
+ * pursuit needs the tight value: it must stay below WARRIOR_ATTACK_RANGE so a
+ * stale goal can never strand a pursuer just out of melee reach. Everything
+ * else (landmark cruising, fleeing, retreating) commits coarsely: run the
+ * chosen destination out before picking a new one.
  */
-const GOAL_STICKINESS_PX = 32;
+const PURSUIT_STICKINESS_PX = 32;
+const CRUISE_STICKINESS_PX = 96;
+
+/**
+ * Flee legs are committed absolutely: a fleeing agent runs its chosen escape
+ * out (a leg is at most ~200 px, well under a second) before picking a new
+ * one. Its flee point is re-derived from its own position and the zone's
+ * inner ring, which can swing to the other side of the agent with one step —
+ * no finite stickiness threshold damps that.
+ */
+const FLEE_STICKINESS_PX = Number.POSITIVE_INFINITY;
+
+/**
+ * Arrival dead-zone: standing within this of the goal counts as "there".
+ * Without it, a unit parked on its goal keeps re-pathing from a start tile
+ * that flaps with every micro-step and runs in place. Must stay below
+ * WARRIOR_ATTACK_RANGE (pursuit stops at melee reach, never inside this).
+ */
+const ARRIVE_RADIUS_PX = 20;
 
 /**
  * An evasive agent only flees enemies inside this radius (px); beyond it there
@@ -185,7 +205,13 @@ export class BehaviorExecutor {
         // move_target (a hunter chases across the map, a holder only fights what
         // enters its engage_range and then returns to its post). Pursuit beyond
         // engage_range never happens: this whole branch is gated on it.
-        this.navigate(self, rt, clampToZone({ x: target.x, y: target.y }, zone), dtSec);
+        this.navigate(
+          self,
+          rt,
+          clampToZone({ x: target.x, y: target.y }, zone),
+          dtSec,
+          PURSUIT_STICKINESS_PX,
+        );
         return;
       }
     }
@@ -199,17 +225,28 @@ export class BehaviorExecutor {
 
     // 5. Idle behavior per stance.
     if (directive.stance === "evasive" && target && distance(self, target) <= FLEE_TRIGGER_RADIUS) {
-      this.navigate(self, rt, clampToZone(fleePoint(self, target), zone), dtSec);
+      this.navigate(self, rt, clampToZone(fleePoint(self, target), zone), dtSec, FLEE_STICKINESS_PX);
       return;
     }
     this.stand(self, rt);
   }
 
   /** Path to `dest` (sticking with the committed goal until it drifts) and step along it. */
-  private navigate(self: AgentState, rt: AgentRuntime, dest: Point, dtSec: number): void {
+  private navigate(
+    self: AgentState,
+    rt: AgentRuntime,
+    dest: Point,
+    dtSec: number,
+    stickiness = CRUISE_STICKINESS_PX,
+  ): void {
     // Never path into water/cover — snap a blocked destination to solid ground.
     dest = clampToLand(dest.x, dest.y);
-    if (!rt.goal || distance(rt.goal, dest) >= GOAL_STICKINESS_PX) {
+    // Already standing on the goal → hold there.
+    if (distance(self, rt.goal ?? dest) <= ARRIVE_RADIUS_PX) {
+      this.stand(self, rt);
+      return;
+    }
+    if (!rt.goal || distance(rt.goal, dest) >= stickiness) {
       rt.path = this.pathfinder.findPath({ x: self.x, y: self.y }, dest);
       rt.goal = dest;
     } else if (rt.path.length === 0) {

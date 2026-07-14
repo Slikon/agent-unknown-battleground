@@ -16,6 +16,7 @@ import {
   TICK_MS,
   WARRIOR_MAX_HP,
   ZONE_DAMAGE_PER_SEC,
+  ZONE_PAUSE_SEC,
   ZONE_SAFE_MARGIN,
 } from "@aub/shared";
 import { BehaviorExecutor } from "../src/game/BehaviorExecutor";
@@ -36,6 +37,10 @@ let winners: string[] = [];
 let matchDurations: number[] = [];
 let worstFlipRate = 0;
 let worstCrossings = 0;
+let zoneDeaths = 0;
+let combatDeaths = 0;
+let earlyDeaths = 0; // deaths before the first shrink begins
+let firstKillTimes: number[] = [];
 
 for (let m = 0; m < MATCHES; m++) {
   const agents = new MapSchema<AgentState>();
@@ -64,6 +69,7 @@ for (let m = 0; m < MATCHES; m++) {
 
   let simSec = 0;
   let nowMs = 0;
+  let firstKillAt = -1;
   while (simSec < MAX_SIM_SEC && agents.size > 1) {
     simSec += dt;
     nowMs += TICK_MS;
@@ -71,10 +77,18 @@ for (let m = 0; m < MATCHES; m++) {
     agents.forEach((a) => {
       if (a.hp > 0 && zone.isOutside(a.x, a.y)) {
         a.hp = Math.max(0, a.hp - ZONE_DAMAGE_PER_SEC * dt);
+        if (a.hp <= 0) zoneDeaths++;
       }
+    });
+    const drained = new Set<string>();
+    agents.forEach((a) => {
+      if (a.hp <= 0) drained.add(a.id);
     });
     const dead = executor.tick(agents, nowMs, dt, zone);
     for (const id of dead) {
+      if (!drained.has(id)) combatDeaths++;
+      if (firstKillAt < 0) firstKillAt = simSec;
+      if (simSec < ZONE_PAUSE_SEC) earlyDeaths++;
       agents.delete(id);
       executor.removeAgent(id);
     }
@@ -109,6 +123,7 @@ for (let m = 0; m < MATCHES; m++) {
 
   totalMatches++;
   matchDurations.push(simSec);
+  if (firstKillAt >= 0) firstKillTimes.push(firstKillAt);
   let winner = "draw/timeout";
   agents.forEach((a) => (winner = a.id));
   if (agents.size === 1) winners.push(winner.split("-p")[1] ?? winner);
@@ -129,8 +144,11 @@ for (let m = 0; m < MATCHES; m++) {
 }
 
 const avg = matchDurations.reduce((a, b) => a + b, 0) / matchDurations.length;
+const avgFirstKill = firstKillTimes.reduce((a, b) => a + b, 0) / Math.max(1, firstKillTimes.length);
 console.log(`\n=== ${totalMatches} matches ===`);
 console.log(`avg duration: ${avg.toFixed(1)}s (min ${Math.min(...matchDurations).toFixed(0)}, max ${Math.max(...matchDurations).toFixed(0)})`);
+console.log(`deaths: ${combatDeaths} combat / ${zoneDeaths} zone (${((zoneDeaths / Math.max(1, zoneDeaths + combatDeaths)) * 100).toFixed(0)}% zone)`);
+console.log(`deaths before first shrink: ${earlyDeaths}; avg first kill at ${avgFirstKill.toFixed(1)}s`);
 console.log(`worst facing-flip rate: ${worstFlipRate.toFixed(2)} flips/sec (spin bug = several/sec sustained)`);
 console.log(`worst boundary crossings by one agent: ${worstCrossings} (jitter bug = hundreds)`);
 console.log(`winner personality histogram (0=hunter 1=castle 2=gold 3=lake 4=coward):`);

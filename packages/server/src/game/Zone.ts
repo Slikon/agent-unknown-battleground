@@ -1,6 +1,7 @@
 import {
   ISLAND_CENTER,
   ISLAND_RADIUS,
+  ZONE_COLLAPSE_PX_PER_SEC,
   ZONE_FINAL_RADIUS,
   ZONE_PAUSE_SEC,
   ZONE_SHRINK_SEC,
@@ -41,10 +42,15 @@ export class Zone {
   private shrinking = false;
   private nextShrinkSec = ZONE_PAUSE_SEC;
 
-  /** Pick a fresh random final center and rebuild the stage plan. */
+  /**
+   * Pick a fresh random final center and rebuild the stage plan. The center
+   * ranges wide enough (0.55·R) to occasionally land on any of the camped
+   * landmarks — castle, gold mine, lake — so no personality gets a permanent
+   * home-field advantage in the endgame.
+   */
   reset(): void {
     const angle = Math.random() * Math.PI * 2;
-    const r = Math.random() * 0.4 * ISLAND_RADIUS;
+    const r = Math.random() * 0.55 * ISLAND_RADIUS;
     const final = nearestWalkable(
       ISLAND_CENTER.x + Math.cos(angle) * r,
       ISLAND_CENTER.y + Math.sin(angle) * r,
@@ -69,7 +75,11 @@ export class Zone {
   /** Advance the timeline one fixed step. */
   update(dtSec: number): void {
     if (this.stageIndex >= ZONE_STAGES) {
-      this.recompute();
+      // Sudden death: keep collapsing so a passive final pair can't stand off
+      // forever — eventually everyone is outside and attrition decides.
+      this.radius = Math.max(0, this.radius - ZONE_COLLAPSE_PX_PER_SEC * dtSec);
+      this.shrinking = this.radius > 0;
+      this.nextShrinkSec = 0;
       return;
     }
     this.timer += dtSec;

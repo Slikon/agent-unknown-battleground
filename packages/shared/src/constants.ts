@@ -69,20 +69,26 @@ export const WARRIOR_ATTACK_RANGE = 40;
  * whole island and closes in over several stages toward a random final center;
  * standing outside it costs HP.
  *
- * The spec's 30 s pause / 20 s shrink assume cautious play, but the Phase 3 bots
- * are aggressive and a brawl resolves in well under a minute — with those
- * timings the zone would never act. So the cycle is compressed (first shrink at
- * 10 s) so the zone genuinely paces the endgame: it forces spread-out survivors
- * together and finishes off stragglers. Full close in ~1.8 min, a fair backstop
- * inside the spec's 3–5 min target.
+ * The spec's 30 s pause / 20 s shrink assume cautious play; the Phase 3 bots
+ * brawl faster, so the cycle is compressed — but less than it once was: with
+ * camper engage ranges tuned down (see BOT_DIRECTIVES) matches survive long
+ * enough for a 15 s pause / 12 s shrink cycle. Full close in ~2.7 min, inside
+ * the spec's 3–5 min target, and the zone decides roughly a third of deaths.
  */
 export const ZONE_STAGES = 6;
-export const ZONE_PAUSE_SEC = 10; // hold before each shrink
-export const ZONE_SHRINK_SEC = 8; // smooth shrink duration
+export const ZONE_PAUSE_SEC = 15; // hold before each shrink
+export const ZONE_SHRINK_SEC = 12; // smooth shrink duration
 /** Start radius — large enough to enclose the entire island. */
 export const ZONE_START_RADIUS = 1000;
 /** Final (fully-closed) radius. */
 export const ZONE_FINAL_RADIUS = 130;
+/**
+ * Sudden death: after the last stage the circle keeps collapsing at this rate
+ * (px/s) until nothing is left. Without it two passive survivors standing
+ * farther apart than their engage ranges inside the final circle would stand
+ * off forever and the match would never end.
+ */
+export const ZONE_COLLAPSE_PX_PER_SEC = 6;
 /** HP drained per second while outside the safe circle. */
 export const ZONE_DAMAGE_PER_SEC = 5;
 /**

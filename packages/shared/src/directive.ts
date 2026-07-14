@@ -53,7 +53,7 @@ export type Directive = z.infer<typeof DirectiveSchema>;
 export const DEFAULT_DIRECTIVE: Directive = {
   stance: "aggressive",
   move_target: { type: "nearest_enemy" },
-  engage_range: 400,
+  engage_range: 300,
   target_priority: "closest",
   retreat_hp: 0,
   retreat_to: "away_from_enemy",
@@ -76,10 +76,13 @@ export const BOT_DIRECTIVES: readonly Directive[] = [
   // Hunter — roams and charges the nearest enemy to the death.
   DEFAULT_DIRECTIVE,
   // Castle guard — holds the castle, fights anything that enters its reach.
+  // Camper engage ranges are kept short so holders only duel genuine intruders
+  // at their post, not everyone whose path crosses theirs early on — the early
+  // game stays a stand-off and the zone gets to shape the endgame.
   {
     stance: "hold_position",
     move_target: { type: "landmark", name: "castle" },
-    engage_range: 180,
+    engage_range: 120,
     target_priority: "closest",
     retreat_hp: 0.3,
     retreat_to: "castle",
@@ -89,7 +92,7 @@ export const BOT_DIRECTIVES: readonly Directive[] = [
   {
     stance: "hold_position",
     move_target: { type: "landmark", name: "gold_mine" },
-    engage_range: 180,
+    engage_range: 120,
     target_priority: "strongest",
     retreat_hp: 0.35,
     retreat_to: "gold_mine",
@@ -99,9 +102,9 @@ export const BOT_DIRECTIVES: readonly Directive[] = [
   {
     stance: "defensive",
     move_target: { type: "landmark", name: "lake" },
-    engage_range: 150,
+    engage_range: 120,
     target_priority: "closest",
-    retreat_hp: 0.45,
+    retreat_hp: 0.3,
     retreat_to: "lake",
     acknowledgement: "Lurking by the lake.",
   },
