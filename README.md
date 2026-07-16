@@ -65,8 +65,9 @@ Type into the box at the bottom to command your agent:
 > `if you drop below half HP, hide in the north forest`
 
 Orders work in any language. Gibberish gets "Order not understood" and your agent
-carries on. Follow-ups like *"and also stop attacking"* often don't take —
-[#2](https://github.com/Slikon/agent-unknown-battleground/issues/2); restate the full
+carries on. Follow-ups work (*"and also hold the castle"*) — except for turning combat
+on or off, where *"and also stop attacking"* is acknowledged and ignored
+([#2](https://github.com/Slikon/agent-unknown-battleground/issues/2)); restate the full
 order instead.
 
 ### Running them separately

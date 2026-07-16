@@ -27,7 +27,7 @@ game loop.
 
 ## What doesn't, yet
 
-- **Follow-up orders** ("and also stop attacking") often don't take effect — [#2](https://github.com/Slikon/agent-unknown-battleground/issues/2). Restate the whole order instead.
+- **Turning fighting on/off in a follow-up** — "and also stop attacking" is acknowledged and ignored ([#2](https://github.com/Slikon/agent-unknown-battleground/issues/2)). Other follow-ups ("and also hold the castle") work fine; it's specific to combat. Restate the whole order as a workaround.
 - No archer class (Phase 5), no fog of war, no killfeed, no sound, no lobby screen.
 - Map is programmatic, not authored in Tiled.
 

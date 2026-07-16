@@ -134,10 +134,12 @@ compare every field *except* `acknowledgement`, which the spec explicitly wants 
 
 ## Known-unfixed
 
-- **Incremental orders don't reliably update `engage_range`.** *"and also stop attacking"*
-  keeps `engage_range: 300` while acknowledging "I will cease offensive actions" — the model
-  anchors on the current directive and edits the ack but not the field. It survived every
-  description variant tried. This is the one consistent failure in the 10-order harness.
+- **A follow-up order can't turn fighting on or off** — [#2](https://github.com/Slikon/agent-unknown-battleground/issues/2),
+  the one consistent harness failure (case 5). *"and also stop attacking"* is acknowledged
+  and ignored. Not an anchoring problem: every other field takes a follow-up 3/3. The cause
+  is that `engage_range` conflates *whether* to fight with *how far* to chase, and the model
+  only recognises the distance half — phrase the same change as a distance and it works 3/3.
+  Prompt fixes are measured dead ends; the fix is a schema change. Details in the issue.
 - **Results are noisy.** The harness scores 9-10/11 run to run at `temperature: 0.2`; a single
   run is not evidence. Compare medians over several runs when tuning.
 - **The harness is not the game.** Two of the bugs above (the impossible off-topic check, the
