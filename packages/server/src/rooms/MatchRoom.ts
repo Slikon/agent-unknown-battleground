@@ -5,7 +5,7 @@ import {
   BOT_DIRECTIVES,
   COUNTDOWN_SEC,
   FINISHED_SEC,
-  HUMAN_INITIAL_DIRECTIVE,
+  humanInitialDirective,
   LOBBY_SEC,
   MATCH_SLOTS,
   MatchState,
@@ -216,7 +216,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
 
       // Bots keep their personality pool; humans start on a defensive hold so
       // they survive long enough to type an order (Phase 4 — see DECISIONS.md).
-      const directive = isBot ? pool[slot] : HUMAN_INITIAL_DIRECTIVE;
+      const directive = isBot ? pool[slot] : humanInitialDirective(spawn);
       this.executor.addAgent(id, directive);
       slot += 1;
     };
@@ -269,7 +269,8 @@ export class MatchRoom extends Room<{ state: MatchState }> {
     // queue — a queued-but-not-started order for this agent gets bumped, and
     // the client also disables its input while a reply is pending.
     const epoch = this.matchEpoch;
-    const currentDirective = this.executor.getDirective(id) ?? HUMAN_INITIAL_DIRECTIVE;
+    const currentDirective =
+      this.executor.getDirective(id) ?? humanInitialDirective({ x: agent.x, y: agent.y });
     const snapshot = buildAgentSnapshot(agent, this.state.agents, currentDirective);
 
     void this.llm.interpret({ agentId: id, playerText, snapshot }).then((res) => {

@@ -106,7 +106,7 @@ export type Directive = z.infer<typeof DirectiveSchema>;
  * Hardcoded directive a human-seated agent ran before Phase 4 (SPEC.md §8):
  * charge the nearest enemy and fight. Kept as the aggressive bot persona
  * (`BOT_DIRECTIVES[0]`, the "hunter") and for anything that still wants a
- * sensible non-null default; human seats now start on `HUMAN_INITIAL_DIRECTIVE`
+ * sensible non-null default; human seats now start on `humanInitialDirective()`
  * instead (see below).
  */
 export const DEFAULT_DIRECTIVE: Directive = {
@@ -128,15 +128,32 @@ export const DEFAULT_DIRECTIVE: Directive = {
  * early — a defensive baseline until the player's first order overrides it.
  * Bots keep their existing personality pool (`BOT_DIRECTIVES`) unchanged.
  */
-export const HUMAN_INITIAL_DIRECTIVE: Directive = {
-  stance: "hold_position",
-  move_target: null,
-  engage_range: 120,
-  target_priority: "closest",
-  retreat_hp: 0.25,
-  retreat_to: "away_from_enemy",
-  acknowledgement: "Awaiting orders.",
-};
+/**
+ * What a human seat runs until its player types something: hold your ground and
+ * defend yourself, so you live long enough to give an order.
+ *
+ * `move_target` anchors to the agent's own spawn rather than the `null` that
+ * would express "stay put" more directly, and that is deliberate — `null` reads
+ * the same to the executor (`resolveMoveTarget` returns null either way, and the
+ * unit stands), but not to the model. A null `move_target` in the current
+ * directive is *sticky*: the model will not replace it, so the player's very
+ * first order — the SPEC §8 done-criterion "run to the lake and don't touch
+ * anyone" — came back as this directive with only the acknowledgement rewritten,
+ * an agent standing still while claiming to run to the lake. Measured over three
+ * runs each: with `move_target: null` the order failed 3/3; with a concrete
+ * `move_target` it passed 3/3, changing nothing else. See DECISIONS.md.
+ */
+export function humanInitialDirective(spawn: { x: number; y: number }): Directive {
+  return {
+    stance: "hold_position",
+    move_target: { type: "point", x: spawn.x, y: spawn.y },
+    engage_range: 120,
+    target_priority: "closest",
+    retreat_hp: 0.25,
+    retreat_to: "away_from_enemy",
+    acknowledgement: "Awaiting orders.",
+  };
+}
 
 /**
  * Bot personalities that fill empty match slots (SPEC.md §8 Phase 3: "an

@@ -1,10 +1,14 @@
 /**
  * Standalone LLM pipeline harness (SPEC.md §5/§8 Phase 4, PHASE4_PLAN.md §5).
  * NO game server, NO Colyseus room — just `LlmDirectiveService` against a fake
- * mid-match `AgentSnapshot`. Runs 10 varied orders, prints the resulting
+ * mid-match `AgentSnapshot`. Runs 11 varied orders, prints the resulting
  * directive fields + latency + a ✓/✗ against a hand-written expectation per
  * order, then p50/p95 latency across the run. Every call still appends to the
  * same `logs/directives.jsonl` — this script IS the prompt-iteration tool.
+ *
+ * Expect 9-10/11 on a good run: the score moves run to run at temperature 0.2,
+ * so compare medians over a few runs rather than reading one. Case 5 is the
+ * known-unfixed one (see DECISIONS.md).
  *
  * Run:
  *   pnpm --filter @aub/server test:llm
@@ -13,6 +17,7 @@
  */
 import {
   DEFAULT_DIRECTIVE,
+  humanInitialDirective,
   DIRECTIVE_JSON_SCHEMA,
   type AgentSnapshot,
   type Directive,
@@ -132,6 +137,20 @@ const cases: TestCase[] = [
     label: "10. explicit coordinates",
     text: "go to position x=300 y=1600",
     check: (d) => d.move_target?.type === "point",
+  },
+  {
+    // The SPEC §8 done-criterion as it actually happens in a match: the very
+    // first order a player types, against the directive a human seat really
+    // starts on. Every other case here starts from DEFAULT_DIRECTIVE, which is
+    // not what the game does — and that gap hid a live bug where the model kept
+    // the initial directive's `move_target` and only rewrote the ack, so the
+    // agent stood still insisting it was running to the lake. Keep this case
+    // pinned to whatever `humanInitialDirective` returns.
+    label: "11. done-criterion from a human's first order",
+    text: "run to the lake and don't touch anyone",
+    currentDirective: () => humanInitialDirective({ x: 700, y: 1400 }),
+    check: (d) =>
+      d.move_target?.type === "landmark" && d.move_target.name === "lake" && d.engage_range === 0,
   },
 ];
 

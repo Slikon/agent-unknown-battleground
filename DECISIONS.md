@@ -90,12 +90,38 @@ a cue to pick a foreign one, and naming languages makes it worse:
 The last wording is the only one that scored clean on both, and is what ships. Deleting the
 rule is not an option: it fixes English by breaking every other language.
 
-### 6. `HUMAN_INITIAL_DIRECTIVE` replaces the aggressive default for human seats
+### 6. Human seats start on `humanInitialDirective(spawn)` — and it must not use `null`
 
 Phase 2's `DEFAULT_DIRECTIVE` charges the nearest enemy, so a human seat rushed in and died
 before the player could type — which defeats the point of this phase. Human seats now start
-defensive (`move_target: null`, `engage_range: 120`, `retreat_hp: 0.25`, ack "Awaiting
-orders."). Bots keep the existing personality pool. Trivially revertable if it plays worse.
+defensive: hold position, `engage_range: 120`, `retreat_hp: 0.25`, ack "Awaiting orders."
+
+It is a **function of the spawn point**, not a constant, and `move_target` anchors to that
+spawn rather than the `null` that would express "stay put" more naturally. That detail is
+load-bearing. `null` and a spawn-anchored point are identical to the executor —
+`resolveMoveTarget` returns null either way and the unit stands — but not to the model: **a
+`null` `move_target` in the current directive is sticky, and the model will not replace it.**
+
+This broke the SPEC §8 done-criterion in a real match while every harness case passed. The
+player's first order, *"run to the lake and don't touch anyone"*, came back as the initial
+directive with only `retreat_to` and the acknowledgement rewritten — an agent standing still,
+fighting, while its ack read "Running to the lake, keeping distance." The confident lie of
+§4, arriving through a different door.
+
+Isolated over three runs each, same order, changing one field of the current directive:
+
+| current directive | result |
+|---|---|
+| `null` + `hold_position` (as it was) | ✗ ✗ ✗ — keeps `move_target: null`, `engage_range: 120` |
+| `null`, `stance: defensive` | ✗ ✓ ✓ |
+| **concrete `move_target`**, `hold_position` | **✓ ✓ ✓** |
+| `null`, `engage_range: 300` | ✗ ✗ ✗ |
+
+Only `move_target` matters; an anti-anchoring prompt rule barely moved it. The harness missed
+all of this because every case started from `DEFAULT_DIRECTIVE`, whose `move_target` is
+non-null — so `test-llm.ts` case 11 now runs the done-criterion from whatever
+`humanInitialDirective` actually returns. Keep it that way: it is the only case that reflects
+what the game really does on a player's first order.
 
 ### 7. `test-llm.ts`: the off-topic checks compared the wrong thing
 
@@ -112,5 +138,8 @@ compare every field *except* `acknowledgement`, which the spec explicitly wants 
   keeps `engage_range: 300` while acknowledging "I will cease offensive actions" — the model
   anchors on the current directive and edits the ack but not the field. It survived every
   description variant tried. This is the one consistent failure in the 10-order harness.
-- **Results are noisy.** The harness scores 8-9/10 run to run at `temperature: 0.2`; a single
+- **Results are noisy.** The harness scores 9-10/11 run to run at `temperature: 0.2`; a single
   run is not evidence. Compare medians over several runs when tuning.
+- **The harness is not the game.** Two of the bugs above (the impossible off-topic check, the
+  sticky `null`) were invisible to `test-llm.ts` and only showed up driving a real match in a
+  browser. A green harness is necessary, not sufficient — play it before believing it.
