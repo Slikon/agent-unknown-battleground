@@ -31,6 +31,7 @@ import {
 } from "../assets/terrain";
 import { SMALLBAR_BASE, SMALLBAR_FILL } from "../assets/ui";
 import { MatchOverlay } from "../ui/MatchOverlay";
+import { OrderConsole } from "../ui/OrderConsole";
 
 /**
  * Time constant (ms) of the exponential lerp that chases server positions.
@@ -83,6 +84,7 @@ export class GameScene extends Phaser.Scene {
   private room?: Room<MatchState>;
   private units = new Map<string, UnitView>();
   private overlay!: MatchOverlay;
+  private orderConsole!: OrderConsole;
 
   // Zone rendering.
   private zoneFog!: Phaser.GameObjects.Rectangle;
@@ -99,11 +101,15 @@ export class GameScene extends Phaser.Scene {
 
     this.overlay = new MatchOverlay();
     this.overlay.setStatus("connecting…");
+    this.orderConsole = new OrderConsole(this);
 
     void this.connect();
 
-    // Tear the DOM overlay down if the scene ever restarts.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.overlay.destroy());
+    // Tear the DOM overlays down if the scene ever restarts.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.overlay.destroy();
+      this.orderConsole.destroy();
+    });
   }
 
   // ── Static island ────────────────────────────────────────────────────────────
@@ -252,6 +258,7 @@ export class GameScene extends Phaser.Scene {
       const room = await new Client(endpoint).joinOrCreate("match", {}, MatchState);
       this.room = room;
       this.overlay.setStatus(null);
+      this.orderConsole.attachRoom(room);
 
       const callbacks = Callbacks.get(room);
       callbacks.onAdd("agents", (agent, sessionId) => this.addUnit(agent, sessionId));
@@ -368,6 +375,7 @@ export class GameScene extends Phaser.Scene {
 
     this.renderZone();
     this.overlay.update(room.state);
+    this.orderConsole.update(room.state, room.sessionId);
   }
 
   private renderZone(): void {

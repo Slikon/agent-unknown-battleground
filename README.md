@@ -7,12 +7,12 @@ The model is the commander, not the muscles: it's called only when you issue an
 order, never inside the game loop.
 
 The full design lives in [`SPEC.md`](./SPEC.md). This README covers running the
-project. **Current status: Phase 3 — battle-royale loop.** The authoritative
+project. **Current status: Phase 4 — LLM order pipeline.** The authoritative
 server runs a full match on its own: 5 warriors (live players + AI bots) spawn
 around an island, a behavior executor drives each one from its directive, a
 shrinking zone squeezes the survivors together, and the last one standing wins —
-then it restarts. The LLM order pipeline arrives in Phase 4; for now every agent
-runs a hardcoded directive.
+then it restarts. Your own agent takes typed orders in natural language; bots
+keep running hardcoded directives.
 
 ## Stack
 
@@ -21,7 +21,7 @@ runs a hardcoded directive.
 | Client | Phaser 3 + Vite + TypeScript (`packages/client`) |
 | Server | Node + Colyseus + TypeScript (`packages/server`) |
 | Shared | Directive Zod schema, types, constants (`packages/shared`) |
-| LLM    | Ollama (local) — wired up in Phase 4, not required before then |
+| LLM    | Ollama (local), `gemma4:e4b` — interprets typed orders (Phase 4) |
 
 ## Prerequisites
 
@@ -30,6 +30,17 @@ runs a hardcoded directive.
   ```bash
   npm install -g pnpm
   ```
+- **[Ollama](https://ollama.com) running locally**, with the order-interpreter model:
+  ```bash
+  ollama serve          # if it isn't already running
+  ollama pull gemma4:e4b
+  ```
+  The game still runs fine without it — orders just come back "the agent didn't
+  understand" and every agent keeps its current directive. Nothing crashes.
+
+  > **Use the GGUF tag `gemma4:e4b`, not `gemma4:e4b-mlx`.** Ollama's MLX backend
+  > silently ignores the `format` schema, so every order fails validation. See
+  > [`DECISIONS.md`](./DECISIONS.md) §2.
 
 ## Run it from scratch
 

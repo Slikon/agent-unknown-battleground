@@ -1,0 +1,116 @@
+# Decisions
+
+Deviations from `SPEC.md` / `PHASE4_PLAN.md` that were made deliberately, with the
+evidence behind them. Each one needs the user's eventual sign-off; none is load-bearing
+enough to be irreversible.
+
+## Phase 4 — LLM order pipeline
+
+### 1. `z.toJSONSchema` instead of the `zod-to-json-schema` package
+
+SPEC §9 rule 3 names `zod-to-json-schema`. That was the Zod-3-era answer; this repo is on
+Zod 4, where JSON-Schema generation is native. Same guarantee ("generated from the one Zod
+schema"), zero new dependencies.
+
+### 2. The model must be a GGUF tag — never an `-mlx` one
+
+**`MODEL = "gemma4:e4b"`, not `gemma4:e4b-mlx`.**
+
+Ollama's MLX backend **silently ignores `format`**. The request still returns HTTP 200 with
+plausible-looking JSON, but nothing is grammar-constrained: the model invents enum values,
+nulls required fields, and wraps output in markdown fences. There is no error to catch — the
+only symptom is every order failing `invalid_schema`.
+
+Measured side by side, same prompt, same schema (`enum: ["red","green"]`, asking the colour
+of the sky — a question whose true answer the enum forbids):
+
+| tag | backend | answer |
+|---|---|---|
+| `gemma4:e4b` | GGUF / llama.cpp | `{"color": "red"}` — grammar enforced ✓ |
+| `gemma4:e4b-mlx` | MLX | ```` ```json {"color":"blue","nuance":"..."} ```` — ignored ✗ |
+
+Running the full 10-order harness against `gemma4:e4b-mlx` scored **0/10**; the same code on
+`gemma4:e4b` scores **8-9/10**. `qwen3.6:35b` (also GGUF) enforces the grammar too, so this
+is the backend, not the model.
+
+Note that llama.cpp's grammar does **not** enforce numeric `minimum`/`maximum` even when it
+is working — `engage_range: 1000` was observed against a `max: 400` schema. This is exactly
+why Zod validation stays mandatory (SPEC §9 rule 4) and why `sanitize` clamps.
+
+### 3. Field `.describe()` strings are prompt surface, not documentation
+
+Every `DirectiveSchema` field carries a `.describe()`, because `z.toJSONSchema` emits them as
+JSON-Schema `description` keywords and the system prompt never explains the fields. Before
+this, the model's only clue to a field's meaning was its name — the semantics existed solely
+in TypeScript comments, which reach the next developer but never the model. That single gap
+accounted for most early failures (`engage_range` never zeroing, coordinates snapping to a
+landmark).
+
+They are prompt-tuned, and phrasing measurably matters: `engage_range` described as a scale
+("0 = never … 400 = maximum") answered **1000** for *"only fight if they come close"*, while
+the same field described as a decision list ("'don't touch anyone' -> 0, 'only fight if they
+come close' -> 120, …") answered 100-120. Re-run `scripts/test-llm.ts` after editing one.
+
+### 4. `retreat_hp` is unit-converted, not clamped
+
+The model answers `50` for *"below half HP"* against a `0..1` schema. Everything else in the
+conversation is percent — the prompt states "55% HP", the player says "half HP", the model's
+own acknowledgement reads "unter 50%" — and only the schema speaks fractions.
+
+**Prompting does not fix it.** Three escalating descriptions, including one spelling out
+*"divide it by 100: 50% becomes 0.5"*, returned an identical `50 / 30 / 25`.
+
+`PHASE4_PLAN.md` §2.1 called for clamping this field alongside `engage_range`. Clamping is
+wrong here: it maps `50` to `1.0` = *always retreat*, the most wrong value available, and the
+agent then cowers permanently while its acknowledgement claims it understood the order. In a
+game whose premise is that your words become behaviour, a confident lie is worse than an
+honest failure.
+
+So `sanitize` converts instead: `[0,1]` is left alone, `(1,100]` is divided by 100. The
+mapping is total and unambiguous — the two readings agree exactly at 1 ("100%" and "always
+retreat" are the same directive) — and anything outside `[0,100]` is not a recognisable unit,
+so it falls through to Zod and surfaces as "the agent didn't understand" with the previous
+directive intact. `engage_range` is still clamped, because 450 -> 400 still means "fight
+anything you see", which is what was asked.
+
+### 5. SPEC §5's language rule is reworded
+
+§5 says: *"Write acknowledgement … in the language of the order."* Against `gemma4:e4b` that
+makes English orders come back **in German**. This model treats a bare mention of language as
+a cue to pick a foreign one, and naming languages makes it worse:
+
+| prompt variant | English order | Russian order |
+|---|---|---|
+| spec wording | German ✗ | Russian ✓ |
+| rule deleted | English ✓ | English ✗ |
+| *"if the order is in English, reply in English"* | English ✓ | **Russian for an English order** ✗ |
+| + a Russian few-shot example | **Russian / French / Slovenian** ✗ | Russian ✓ |
+| **"Use the exact same language as the player's order — never switch languages, never translate."** | English ✓ | Russian ✓ |
+
+The last wording is the only one that scored clean on both, and is what ships. Deleting the
+rule is not an option: it fixes English by breaking every other language.
+
+### 6. `HUMAN_INITIAL_DIRECTIVE` replaces the aggressive default for human seats
+
+Phase 2's `DEFAULT_DIRECTIVE` charges the nearest enemy, so a human seat rushed in and died
+before the player could type — which defeats the point of this phase. Human seats now start
+defensive (`move_target: null`, `engage_range: 120`, `retreat_hp: 0.25`, ack "Awaiting
+orders."). Bots keep the existing personality pool. Trivially revertable if it plays worse.
+
+### 7. `test-llm.ts`: the off-topic checks compared the wrong thing
+
+Cases 7 (gibberish) and 8 (jailbreak) originally asserted
+`deepEqual(d, DEFAULT_DIRECTIVE) && mentionsNotUnderstood(d.acknowledgement)`. Those two
+conditions are mutually exclusive — `DEFAULT_DIRECTIVE.acknowledgement` is "Charging the
+nearest enemy.", which does not contain "not understood" — so the checks could never pass,
+and reported failures on responses that were in fact exactly what SPEC §5 asks for. They now
+compare every field *except* `acknowledgement`, which the spec explicitly wants replaced.
+
+## Known-unfixed
+
+- **Incremental orders don't reliably update `engage_range`.** *"and also stop attacking"*
+  keeps `engage_range: 300` while acknowledging "I will cease offensive actions" — the model
+  anchors on the current directive and edits the ack but not the field. It survived every
+  description variant tried. This is the one consistent failure in the 10-order harness.
+- **Results are noisy.** The harness scores 8-9/10 run to run at `temperature: 0.2`; a single
+  run is not evidence. Compare medians over several runs when tuning.

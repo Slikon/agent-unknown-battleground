@@ -2,53 +2,112 @@ import { z } from "zod";
 import { LANDMARK_NAMES } from "./constants";
 
 /**
- * The single contract between the LLM and the game engine (SPEC.md §4).
+ * The single contract between the LLM and the game engine (SPEC.md §4). The
+ * behavior executor (`packages/server/src/game/BehaviorExecutor.ts`) runs any
+ * value of this type as its per-tick state machine — hardcoded bot personas,
+ * the human defaults below, and Phase 4's LLM-produced directives are all just
+ * ordinary `Directive`s to it, never special-cased. Keep this schema as narrow
+ * as possible: every extra field makes the prompt more expensive and adds bugs.
  *
- * Phase 0 note: this is a *stub* — the schema shape is authoritative, but
- * nothing consumes it yet. The LLM pipeline that produces directives and the
- * behavior executor that runs them arrive in later phases. Keep this schema as
- * narrow as possible: every extra field makes the prompt more expensive and
- * adds bugs.
- *
- * The JSON Schema handed to Ollama's structured output is generated from THIS
- * object (via zod-to-json-schema) in Phase 4 — it must never be hand-written
+ * The JSON Schema handed to Ollama's structured output (`DIRECTIVE_JSON_SCHEMA`
+ * in `./llm.ts`) is generated from THIS object — it must never be hand-written
  * in a second place.
+ *
+ * Every field carries a `.describe()`, and those strings are load-bearing: they
+ * are the ONLY place the model learns what a field means, since `z.toJSONSchema`
+ * emits them as JSON Schema `description` keywords and the system prompt never
+ * explains the fields. Field semantics must live here rather than in `//`
+ * comments — a comment reaches the next developer, a `.describe()` reaches both
+ * the developer and the model. Read them as prompt text, and re-run
+ * `scripts/test-llm.ts` after editing one.
  */
 export const DirectiveSchema = z.object({
-  // Overall behavior manner.
-  stance: z.enum(["aggressive", "defensive", "evasive", "hold_position"]),
+  stance: z
+    .enum(["aggressive", "defensive", "evasive", "hold_position"])
+    .describe(
+      "Overall behavior manner. aggressive = seek out enemies and fight them; " +
+        "defensive = hold ground but fight back when approached; " +
+        "evasive = avoid all fighting and keep away from enemies; " +
+        "hold_position = stay at move_target and only fight what comes within engage_range.",
+    ),
 
-  // Where to head. null = decide based on stance.
-  move_target: z.union([
-    z.object({ type: z.literal("point"), x: z.number(), y: z.number() }),
-    z.object({ type: z.literal("landmark"), name: z.enum(LANDMARK_NAMES) }),
-    z.object({ type: z.literal("nearest_enemy") }),
-    z.null(),
-  ]),
+  move_target: z
+    .union([
+      z.object({ type: z.literal("point"), x: z.number(), y: z.number() }),
+      z.object({ type: z.literal("landmark"), name: z.enum(LANDMARK_NAMES) }),
+      z.object({ type: z.literal("nearest_enemy") }),
+      z.null(),
+    ])
+    .describe(
+      "Where to head. Use {type:'point', x, y} when the player names explicit " +
+        "coordinates or numbers (e.g. 'go to x=300 y=1600'). Use " +
+        "{type:'landmark', name} for a named place on the map. Use " +
+        "{type:'nearest_enemy'} to chase down whoever is closest. Use null to " +
+        "let stance decide.",
+    ),
 
-  // Distance (in pixels) at which combat may be engaged; 0 = never attack.
-  engage_range: z.number().min(0).max(400),
+  // Phrased as a decision list because this model picks a number off a worked
+  // list far more reliably than it interprets a described scale — the earlier
+  // "0 = never ... 400 = maximum" phrasing answered 1000 for "only fight if they
+  // come close". Grammar does not enforce min/max, so `sanitize` still clamps.
+  engage_range: z
+    .number()
+    .min(0)
+    .max(400)
+    .describe(
+      "Pixels within which this unit may start a fight. Choose by what the player " +
+        "asked: 'do not fight / don't touch anyone / stop attacking' -> 0. " +
+        "'only fight if they come close / defend the spot' -> 120. " +
+        "'fight normally' -> 300. 'attack everything on sight' -> 400. " +
+        "0 means this unit never attacks anyone.",
+    ),
 
-  // Who to hit first.
-  target_priority: z.enum(["closest", "weakest", "strongest", "ignore"]),
+  target_priority: z
+    .enum(["closest", "weakest", "strongest", "ignore"])
+    .describe(
+      "Which enemy to attack first when several are within engage_range. " +
+        "ignore = do not pick targets at all.",
+    ),
 
-  // HP threshold (0..1) for retreating, and where to retreat to.
-  retreat_hp: z.number().min(0).max(1),
-  retreat_to: z.enum([...LANDMARK_NAMES, "away_from_enemy"]),
+  // Fraction, not percent — but the model reliably answers in percent anyway and
+  // cannot be prompted out of it, so LlmDirectiveService's `sanitize` converts
+  // (1,100] -> [0,1] before this schema ever sees the value. See DECISIONS.md.
+  retreat_hp: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe(
+      "Retreat once HP falls below this share of maximum HP. " +
+        "0.5 = retreat at half HP. 0.25 = retreat at a quarter. " +
+        "0 = never retreat, fight to the death.",
+    ),
 
-  // A one-liner "understanding" of the order — shown to the player as the
-  // agent's thought. The only free-text field, hard-capped for safety.
-  acknowledgement: z.string().max(120),
+  retreat_to: z
+    .enum([...LANDMARK_NAMES, "away_from_enemy"])
+    .describe(
+      "Where to run once HP drops below retreat_hp. " +
+        "away_from_enemy = simply flee from whoever is nearest.",
+    ),
+
+  acknowledgement: z
+    .string()
+    .max(120)
+    .describe(
+      "One short line confirming the order, written from the soldier's point of " +
+        "view, in the same language the player used. Shown to the player as the " +
+        "agent's thought. Maximum 120 characters.",
+    ),
 });
 
 /** The validated, structured order a single agent executes every tick. */
 export type Directive = z.infer<typeof DirectiveSchema>;
 
 /**
- * Hardcoded directive a human-seated agent runs until the LLM pipeline lands
- * (SPEC.md §8): charge the nearest enemy and fight. Phase 4 replaces it per
- * agent with LLM-produced directives — the behavior executor already treats it
- * as just one possible directive, not a special case.
+ * Hardcoded directive a human-seated agent ran before Phase 4 (SPEC.md §8):
+ * charge the nearest enemy and fight. Kept as the aggressive bot persona
+ * (`BOT_DIRECTIVES[0]`, the "hunter") and for anything that still wants a
+ * sensible non-null default; human seats now start on `HUMAN_INITIAL_DIRECTIVE`
+ * instead (see below).
  */
 export const DEFAULT_DIRECTIVE: Directive = {
   stance: "aggressive",
@@ -58,6 +117,25 @@ export const DEFAULT_DIRECTIVE: Directive = {
   retreat_hp: 0,
   retreat_to: "away_from_enemy",
   acknowledgement: "Charging the nearest enemy.",
+};
+
+/**
+ * Initial directive for a human-seated agent (Phase 4 — deviation from the
+ * Phase 2 hardcode, see DECISIONS.md). `DEFAULT_DIRECTIVE`'s aggressive
+ * "charge and die fast" behavior fights this phase's whole point: a player
+ * needs their agent to survive long enough to type an order. This holds near
+ * spawn and only fights what comes within melee-adjacent range, retreating
+ * early — a defensive baseline until the player's first order overrides it.
+ * Bots keep their existing personality pool (`BOT_DIRECTIVES`) unchanged.
+ */
+export const HUMAN_INITIAL_DIRECTIVE: Directive = {
+  stance: "hold_position",
+  move_target: null,
+  engage_range: 120,
+  target_priority: "closest",
+  retreat_hp: 0.25,
+  retreat_to: "away_from_enemy",
+  acknowledgement: "Awaiting orders.",
 };
 
 /**

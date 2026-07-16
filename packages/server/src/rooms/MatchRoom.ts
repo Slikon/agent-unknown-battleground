@@ -4,20 +4,26 @@ import {
   AgentState,
   BOT_DIRECTIVES,
   COUNTDOWN_SEC,
-  DEFAULT_DIRECTIVE,
   FINISHED_SEC,
+  HUMAN_INITIAL_DIRECTIVE,
   LOBBY_SEC,
   MATCH_SLOTS,
   MatchState,
+  ORDER_MAX_CHARS,
+  ORDER_MESSAGE,
+  ORDER_ACK_MESSAGE,
   SPAWN_POINTS,
   TICK_MS,
   WARRIOR_MAX_HP,
   ZONE_DAMAGE_PER_SEC,
   type AgentColor,
   type MatchPhase,
+  type OrderAckMessage,
 } from "@aub/shared";
 import { BehaviorExecutor } from "../game/BehaviorExecutor";
 import { Zone } from "../game/Zone";
+import { LlmDirectiveService, type InterpretFailureReason } from "../llm/LlmDirectiveService";
+import { buildAgentSnapshot } from "../llm/snapshot";
 
 function label(color: AgentColor): string {
   return color.charAt(0).toUpperCase() + color.slice(1);
@@ -30,6 +36,17 @@ function shuffle<T>(a: T[]): T[] {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+/**
+ * The ack text for a failed `interpret()` call. "overloaded" (this agent's
+ * queued order got bumped by a newer one) reads differently from every other
+ * failure — it isn't a misunderstanding, it's "your later order took over."
+ */
+function failureAckText(reason: InterpretFailureReason): string {
+  return reason === "overloaded"
+    ? "Belay that — new orders."
+    : "The agent didn't understand the order.";
 }
 
 /**
@@ -50,6 +67,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
 
   private readonly executor = new BehaviorExecutor();
   private readonly zone = new Zone();
+  private readonly llm = new LlmDirectiveService();
 
   /** Monotonic match clock (ms) driving attack cooldowns. */
   private matchTimeMs = 0;
@@ -59,9 +77,18 @@ export class MatchRoom extends Room<{ state: MatchState }> {
   private phaseElapsedSec = 0;
   /** Monotonic counter for unique bot ids. */
   private botSeq = 0;
+  /**
+   * Bumped every time a match resets (see `enterLobby`). An in-flight LLM
+   * call captures the epoch when it started; if it resolves after the match
+   * has since reset, the response is dropped silently instead of being
+   * applied to a stale/reused sessionId in the new match (SPEC.md §9 rule 5).
+   */
+  private matchEpoch = 0;
 
   onCreate(): void {
     this.enterLobby();
+
+    this.onMessage(ORDER_MESSAGE, (client, msg: unknown) => this.onOrder(client, msg));
 
     // Fixed timestep: the interval fires with real (jittery) deltas; accumulate
     // them and step the simulation in exact 50 ms ticks.
@@ -124,6 +151,9 @@ export class MatchRoom extends Room<{ state: MatchState }> {
     this.state.winnerName = "";
     this.state.phaseTimer = LOBBY_SEC;
     this.setPhase("lobby");
+    // Stale-response fence: any LLM call still in flight from the match that
+    // just ended will see this epoch has moved and drop its result silently.
+    this.matchEpoch += 1;
     console.log(`[MatchRoom ${this.roomId}] lobby`);
   }
 
@@ -184,7 +214,9 @@ export class MatchRoom extends Room<{ state: MatchState }> {
       agent.hp = WARRIOR_MAX_HP;
       this.state.agents.set(id, agent);
 
-      const directive = isBot ? pool[slot] : DEFAULT_DIRECTIVE;
+      // Bots keep their personality pool; humans start on a defensive hold so
+      // they survive long enough to type an order (Phase 4 — see DECISIONS.md).
+      const directive = isBot ? pool[slot] : HUMAN_INITIAL_DIRECTIVE;
       this.executor.addAgent(id, directive);
       slot += 1;
     };
@@ -196,6 +228,70 @@ export class MatchRoom extends Room<{ state: MatchState }> {
     while (slot < MATCH_SLOTS) {
       seat(`bot-${++this.botSeq}`, true);
     }
+  }
+
+  // ── Orders (SPEC.md §8 Phase 4) ──────────────────────────────────────────────
+
+  /**
+   * Handle a player's order text. Never lets the input dangle unanswered: every
+   * rejection sends an `orderAck {ok:false}` with a specific line, except guard
+   * 1 (malformed/empty payload), which is silently ignored — there's no order
+   * to acknowledge. Privacy (SPEC.md §9 rule 9) is structural here: the ack
+   * only ever goes to `client`, nothing order-related touches synced state or
+   * gets broadcast.
+   */
+  private onOrder(client: Client, msg: unknown): void {
+    // Guard 1: payload is an object, `text` is a non-empty string once trimmed.
+    if (typeof msg !== "object" || msg === null) return;
+    const rawText = (msg as { text?: unknown }).text;
+    if (typeof rawText !== "string") return;
+    const trimmed = rawText.trim();
+    if (trimmed.length === 0) return;
+
+    // Guard 2: cap length — truncate, don't reject.
+    const playerText = trimmed.length > ORDER_MAX_CHARS ? trimmed.slice(0, ORDER_MAX_CHARS) : trimmed;
+
+    // Guard 3: a match must actually be running (countdown or live).
+    if (this.state.phase !== "countdown" && this.state.phase !== "live") {
+      this.sendAck(client, false, "No match running.");
+      return;
+    }
+
+    // Guard 4: the ordering client must have a living agent seated.
+    const id = client.sessionId;
+    const agent = this.state.agents.get(id);
+    if (!agent || agent.hp <= 0) {
+      this.sendAck(client, false, "You have no agent to command.");
+      return;
+    }
+
+    // Guard 5 (in-flight coalescing) is handled inside LlmDirectiveService's
+    // queue — a queued-but-not-started order for this agent gets bumped, and
+    // the client also disables its input while a reply is pending.
+    const epoch = this.matchEpoch;
+    const currentDirective = this.executor.getDirective(id) ?? HUMAN_INITIAL_DIRECTIVE;
+    const snapshot = buildAgentSnapshot(agent, this.state.agents, currentDirective);
+
+    void this.llm.interpret({ agentId: id, playerText, snapshot }).then((res) => {
+      if (this.matchEpoch !== epoch) return; // match reset while thinking — drop silently
+
+      const stillAlive = this.state.agents.get(id);
+      if (!stillAlive || stillAlive.hp <= 0) {
+        this.sendAck(client, false, "Your agent is gone.");
+        return;
+      }
+
+      if (res.ok) {
+        this.executor.setDirective(id, res.directive);
+        this.sendAck(client, true, res.directive.acknowledgement);
+      } else {
+        this.sendAck(client, false, failureAckText(res.reason));
+      }
+    });
+  }
+
+  private sendAck(client: Client, ok: boolean, text: string): void {
+    client.send(ORDER_ACK_MESSAGE, { ok, text } satisfies OrderAckMessage);
   }
 
   // ── Simulation ───────────────────────────────────────────────────────────────

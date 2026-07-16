@@ -1,6 +1,7 @@
 import { Server, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { MatchRoom } from "./rooms/MatchRoom";
+import { LlmDirectiveService } from "./llm/LlmDirectiveService";
 
 // Binds to 0.0.0.0 so other machines on the LAN can connect straight away
 // (SPEC.md §10: two browser windows on localhost, a laptop over Wi-Fi).
@@ -24,6 +25,14 @@ gameServer
     // (autoDispose = false); clients joinOrCreate straight into it.
     await matchMaker.createRoom("match", {});
     console.log("🏝️  Match room created — a bot match is already underway");
+
+    // Fire-and-forget: preload the model into Ollama so the first real order
+    // isn't a multi-second cold load (SPEC.md §8 Phase 4). The server must
+    // boot fine with Ollama down — a failed warm-up just logs a warning
+    // (SPEC.md §9 rule 5); every MatchRoom's own LlmDirectiveService instance
+    // still benefits since Ollama keeps the model hot per model name, not per
+    // caller.
+    new LlmDirectiveService().warmUp();
   })
   .catch((err: unknown) => {
     console.error("Failed to start AUB server:", err);

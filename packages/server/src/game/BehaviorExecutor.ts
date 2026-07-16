@@ -116,6 +116,11 @@ export class BehaviorExecutor {
     }
   }
 
+  /** Read side of `setDirective` — feeds `currentDirective` into the LLM snapshot (Phase 4). */
+  getDirective(sessionId: string): Directive | undefined {
+    return this.runtime.get(sessionId)?.directive;
+  }
+
   /**
    * Advance every living agent one fixed step. Returns the sessionIds of agents
    * that died this tick (hp reached 0) so the room can remove them from state.
