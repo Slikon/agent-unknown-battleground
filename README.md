@@ -6,13 +6,15 @@ a structured JSON *directive*, and a deterministic 20 Hz game server executes it
 The model is the commander, not the muscles: it's called only when you issue an
 order, never inside the game loop.
 
-The full design lives in [`SPEC.md`](./SPEC.md). This README covers running the
-project. **Current status: Phase 4 — LLM order pipeline.** The authoritative
-server runs a full match on its own: 5 warriors (live players + AI bots) spawn
-around an island, a behavior executor drives each one from its directive, a
-shrinking zone squeezes the survivors together, and the last one standing wins —
-then it restarts. Your own agent takes typed orders in natural language; bots
-keep running hardcoded directives.
+**Status: Phase 4 — you can play it.** A match is always running: 5 warriors on an
+island, a shrinking zone, last one standing wins, then it restarts. Bots fill every
+seat, so it plays itself with nobody connected. Your agent takes typed orders in any
+language.
+
+This README is how to run it. For how it works:
+
+- **[docs/](./docs/)** — [architecture](./docs/architecture.md) · [game mechanics](./docs/game-mechanics.md) · [what works today](./docs/README.md)
+- [`SPEC.md`](./SPEC.md) — the original design · [`DECISIONS.md`](./DECISIONS.md) — where we deviated, and why
 
 ## Stack
 
@@ -52,15 +54,20 @@ pnpm install
 pnpm dev
 ```
 
-Then open the client in a browser:
+Then open **http://localhost:5173** — a match is already in progress. Opening a second
+window drops another warrior in; both windows see everyone.
 
-- **http://localhost:5173** — you should see the island and a match already in
-  progress (the server runs matches with bots even before anyone connects).
-  Opening a second window drops another warrior in; both windows see everyone.
+Type into the box at the bottom to command your agent:
 
-The server logs `⚔️  AUB server listening on ws://0.0.0.0:2567` and creates the
-match room at boot, so an all-bot match plays itself out to a winner with zero
-humans connected.
+> `run to the lake and don't touch anyone` — it goes, and refuses to fight
+> `hold the castle, only fight if they come close`
+> `hunt down the weakest enemy`
+> `if you drop below half HP, hide in the north forest`
+
+Orders work in any language. Gibberish gets "Order not understood" and your agent
+carries on. Follow-ups like *"and also stop attacking"* often don't take —
+[#2](https://github.com/Slikon/agent-unknown-battleground/issues/2); restate the full
+order instead.
 
 ### Running them separately
 
@@ -72,8 +79,11 @@ pnpm dev:server   # Colyseus on ws://localhost:2567 (auto-restarts on change)
 ### Other scripts
 
 ```bash
-pnpm typecheck    # tsc --noEmit across every package (strict mode)
-pnpm build        # production build of the client (Vite)
+pnpm typecheck                                    # strict tsc across every package
+pnpm build                                        # production client build
+pnpm --filter @aub/server test:llm                # 11 orders through the real pipeline
+pnpm --filter @aub/server test:llm -- --model X   # benchmark another Ollama tag
+npx tsx packages/server/scripts/sim-verify.ts 20  # headless matches — run after any tuning
 ```
 
 ## LAN / second machine
@@ -96,8 +106,10 @@ aubg/
 │   │   └── public/assets/   ← drop the Tiny Swords art here (see ASSETS.md)
 │   ├── server/   Node + Colyseus authoritative server
 │   └── shared/   Directive schema (Zod) + types + constants — the LLM↔game contract
+├── docs/                how it all works — start at docs/README.md
 ├── tsconfig.base.json   one shared strict TS config, extended by every package
 ├── SPEC.md              full architecture & phased plan
+├── DECISIONS.md         deviations from the spec, with the evidence
 └── ASSETS.md            how to install the Tiny Swords asset pack
 ```
 
